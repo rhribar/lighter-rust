@@ -6,16 +6,17 @@ Types for tracking balances, transactions, and portfolio across exchanges.
 
 from typing import Dict, List, Optional, TypedDict, Literal, Union
 from decimal import Decimal
+from enum import Enum
 from bot_types import ExchangeName, Result
 
 # ===== LEDGER ACCOUNT TYPES =====
 
-class AccountType(str, Literal):
+class AccountType(str, Enum):
     SPOT = "spot"
     MARGIN = "margin"
     FUTURES = "futures"
     OPTIONS = "options"
-    STAKING = "staking"
+    SAVINGS = "savings"
 
 class LedgerAccount(TypedDict):
     """Individual account on an exchange"""
@@ -28,10 +29,11 @@ class LedgerAccount(TypedDict):
 
 # ===== BALANCE TYPES =====
 
-class BalanceType(str, Literal):
+class BalanceType(str, Enum):
     AVAILABLE = "available"    # Free to trade
     LOCKED = "locked"         # In open orders
     MARGIN = "margin"         # Used as margin
+    COLLATERAL = "collateral"  # Used as collateral
     STAKED = "staked"         # Staked/earning rewards
     PENDING = "pending"       # Pending deposits/withdrawals
 
@@ -52,6 +54,8 @@ class AccountBalance(TypedDict):
     account: LedgerAccount
     balances: Dict[str, AssetBalance]  # asset -> balance
     total_value_usd: float
+    total_value_btc: float
+    margin_level: Optional[str]
     last_updated: int
 
 # ===== PORTFOLIO AGGREGATION TYPES =====
@@ -67,7 +71,10 @@ class AggregatedBalance(TypedDict):
 class PortfolioSummary(TypedDict):
     """Complete portfolio summary"""
     total_value_usd: float
+    total_value_btc: float
     total_unrealized_pnl: float
+    total_realized_pnl: float
+    total_fees: float
     asset_allocation: Dict[str, AggregatedBalance]
     exchange_allocation: Dict[ExchangeName, float]  # Percentage per exchange
     account_count: int
@@ -77,12 +84,13 @@ class PortfolioSnapshot(TypedDict):
     """Point-in-time portfolio snapshot"""
     timestamp: int
     total_value_usd: float
+    total_value_btc: float
     accounts: List[AccountBalance]
     summary: PortfolioSummary
 
 # ===== TRANSACTION TYPES =====
 
-class TransactionType(str, Literal):
+class TransactionType(str, Enum):
     DEPOSIT = "deposit"
     WITHDRAWAL = "withdrawal"
     TRADE = "trade"
@@ -93,7 +101,7 @@ class TransactionType(str, Literal):
     STAKING_REWARD = "staking_reward"
     LIQUIDATION = "liquidation"
 
-class TransactionStatus(str, Literal):
+class TransactionStatus(str, Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     FAILED = "failed"

@@ -6,15 +6,16 @@ Types specific to trading operations and order management.
 
 from typing import Dict, List, Optional, TypedDict, Literal, Union
 from decimal import Decimal
+from enum import Enum
 from bot_types import ExchangeName, Result
 
 # ===== ORDER TYPES =====
 
-class OrderSide(str, Literal):
+class OrderSide(str, Enum):
     BUY = "buy"
     SELL = "sell"
 
-class OrderType(str, Literal):
+class OrderType(str, Enum):
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
@@ -22,13 +23,12 @@ class OrderType(str, Literal):
     TAKE_PROFIT = "take_profit"
     TAKE_PROFIT_LIMIT = "take_profit_limit"
 
-class TimeInForce(str, Literal):
+class TimeInForce(str, Enum):
     GTC = "gtc"  # Good Till Canceled
     IOC = "ioc"  # Immediate Or Cancel
     FOK = "fok"  # Fill Or Kill
-    GTD = "gtd"  # Good Till Date
 
-class OrderStatus(str, Literal):
+class OrderStatus(str, Enum):
     PENDING = "pending"
     OPEN = "open"
     PARTIALLY_FILLED = "partially_filled"
@@ -54,20 +54,22 @@ class OrderRequest(TypedDict):
 
 class OrderResponse(TypedDict):
     """Order creation response"""
-    status: Literal["live", "testing", "pending", "filled", "rejected"]
-    exchange: ExchangeName
+    order_id: str
+    client_order_id: Optional[str]
     symbol: str
     side: OrderSide
     type: OrderType
     size: str
     price: Optional[str]
-    order_id: Optional[str]
-    client_order_id: Optional[str]
-    result: Dict[str, any]  # Raw exchange response
-    timestamp: int
+    status: OrderStatus
+    filled_size: Optional[str]
+    remaining_size: Optional[str]
+    average_price: Optional[str]
+    created_at: int
+    updated_at: int
 
 class OrderFill(TypedDict):
-    """Order fill information"""
+    """Order execution/fill information"""
     fill_id: str
     order_id: str
     symbol: str
@@ -77,44 +79,31 @@ class OrderFill(TypedDict):
     fee: str
     fee_currency: str
     timestamp: int
-
-class OrderDetails(TypedDict):
-    """Detailed order information"""
-    order_id: str
-    client_order_id: Optional[str]
-    symbol: str
-    side: OrderSide
-    type: OrderType
-    status: OrderStatus
-    size: str
-    filled_size: str
-    remaining_size: str
-    price: Optional[str]
-    average_fill_price: Optional[str]
-    time_in_force: TimeInForce
-    reduce_only: bool
-    post_only: bool
-    created_at: int
-    updated_at: int
-    fills: List[OrderFill]
+    is_maker: bool
 
 # ===== POSITION MANAGEMENT TYPES =====
 
-class PositionRequest(TypedDict):
-    """Position modification request"""
+class PositionInfo(TypedDict):
+    """Position information"""
     symbol: str
-    action: Literal["open", "close", "reduce", "increase"]
-    size: Optional[str]
-    side: Optional[OrderSide]
-    price: Optional[str]
+    size: str
+    side: Literal["long", "short"]
+    entry_price: str
+    mark_price: str
+    liquidation_price: Optional[str]
+    unrealized_pnl: str
+    margin_used: str
+    percentage_pnl: str
 
-class PositionResponse(TypedDict):
-    """Position modification response"""
-    success: bool
-    position_id: Optional[str]
+class PositionUpdate(TypedDict):
+    """Position update information"""
     symbol: str
-    action: str
-    result: Dict[str, any]
+    old_size: str
+    new_size: str
+    side: Literal["long", "short"]
+    entry_price: str
+    mark_price: str
+    realized_pnl: str
     timestamp: int
 
 # ===== RISK MANAGEMENT TYPES =====
@@ -123,81 +112,64 @@ class RiskLimits(TypedDict):
     """Risk management limits"""
     max_position_size: str
     max_order_size: str
-    max_daily_volume: str
-    max_leverage: float
-    stop_loss_percentage: Optional[float]
-    take_profit_percentage: Optional[float]
+    max_daily_loss: str
+    max_open_orders: int
+    allowed_symbols: List[str]
 
-class RiskMetrics(TypedDict):
-    """Current risk metrics"""
-    current_leverage: float
-    portfolio_var: float  # Value at Risk
-    max_drawdown: float
-    sharpe_ratio: Optional[float]
-    daily_pnl: float
-    unrealized_pnl: float
+class RiskCheck(TypedDict):
+    """Risk check result"""
+    passed: bool
+    violations: List[str]
+    warnings: List[str]
+    max_allowed_size: Optional[str]
 
 # ===== PORTFOLIO MANAGEMENT TYPES =====
 
-class PortfolioSummary(TypedDict):
-    """Portfolio summary across exchanges"""
-    total_equity: float
-    total_unrealized_pnl: float
-    total_margin_used: float
-    available_balance: float
-    positions_count: int
-    exchanges: List[ExchangeName]
-    last_updated: int
+class PortfolioBalance(TypedDict):
+    """Portfolio balance information"""
+    total_equity: str
+    available_balance: str
+    used_margin: str
+    unrealized_pnl: str
+    total_margin_requirement: str
+    maintenance_margin: str
+    free_collateral: str
 
-class CrossExchangePosition(TypedDict):
-    """Position across multiple exchanges"""
-    symbol: str
-    total_size: float
-    total_notional: float
-    average_entry_price: float
-    unrealized_pnl: float
-    exchanges: Dict[ExchangeName, Dict[str, any]]
+class PortfolioSummary(TypedDict):
+    """Portfolio summary"""
+    exchange: ExchangeName
+    balances: PortfolioBalance
+    open_positions: List[PositionInfo]
+    open_orders: List[OrderResponse]
+    daily_pnl: str
+    total_fees_paid: str
+    timestamp: int
 
 # ===== EXECUTION STRATEGY TYPES =====
 
-class ExecutionStrategy(str, Literal):
+class ExecutionStrategy(str, Enum):
     MARKET = "market"
     LIMIT = "limit"
     TWAP = "twap"  # Time-Weighted Average Price
     VWAP = "vwap"  # Volume-Weighted Average Price
     ICEBERG = "iceberg"
 
-class TWAPConfig(TypedDict):
-    """TWAP execution configuration"""
-    duration_minutes: int
-    slice_count: int
-    randomize_timing: bool
-    max_participation_rate: float
-
-class IcebergConfig(TypedDict):
-    """Iceberg order configuration"""
-    total_size: str
-    slice_size: str
-    price_variance: float
-
-class ExecutionRequest(TypedDict):
-    """Advanced execution request"""
-    symbol: str
-    side: OrderSide
-    total_size: str
+class ExecutionParams(TypedDict):
+    """Execution strategy parameters"""
     strategy: ExecutionStrategy
-    target_price: Optional[str]
-    max_slippage: Optional[float]
-    twap_config: Optional[TWAPConfig]
-    iceberg_config: Optional[IcebergConfig]
-    risk_limits: Optional[RiskLimits]
+    total_size: str
+    max_slice_size: Optional[str]
+    time_interval: Optional[int]  # seconds
+    price_limit: Optional[str]
+    start_time: Optional[int]
+    end_time: Optional[int]
 
 # ===== RESULT TYPE ALIASES =====
 
 # Specific result types for operator operations
-OrderResult = Result          # Success[OrderResponse] | Failure[BotError]
-OrderDetailsResult = Result   # Success[OrderDetails] | Failure[BotError]
-PositionResult = Result       # Success[PositionResponse] | Failure[BotError]
-ExecutionResult = Result      # Success[List[OrderResponse]] | Failure[BotError]
-PortfolioResult = Result      # Success[PortfolioSummary] | Failure[BotError]
-RiskMetricsResult = Result    # Success[RiskMetrics] | Failure[BotError] 
+OrderResult = Result           # Success[OrderResponse] | Failure[BotError]
+ClosePositionResult = Result   # Success[OrderResponse] | Failure[BotError]
+PositionInfoResult = Result    # Success[PositionInfo] | Failure[BotError]
+PortfolioResult = Result       # Success[PortfolioSummary] | Failure[BotError]
+RiskCheckResult = Result       # Success[RiskCheck] | Failure[BotError]
+ExecutionResult = Result       # Success[List[OrderResponse]] | Failure[BotError] 

@@ -5,6 +5,7 @@ Types specific to data fetching operations across exchanges.
 """
 
 from typing import Dict, List, Optional, TypedDict, Literal
+from enum import Enum
 from bot_types import ExchangeName, Result
 
 # ===== ACCOUNT & BALANCE TYPES =====
@@ -30,7 +31,7 @@ class AccountBalance(TypedDict):
 
 # ===== POSITION TYPES =====
 
-class PositionSide(str, Literal):
+class PositionSide(str, Enum):
     LONG = "long"
     SHORT = "short"
 
@@ -73,7 +74,7 @@ class FundingRates(TypedDict):
 
 # ===== ARBITRAGE TYPES =====
 
-class ArbitrageDirection(str, Literal):
+class ArbitrageDirection(str, Enum):
     LONG = "long"
     SHORT = "short"
 

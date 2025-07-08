@@ -1,4 +1,4 @@
-# Points Bot - Exchange Fetchers
+dd# Points Bot - Exchange Fetchers
 
 A modular Python application for fetching points and trading data from various cryptocurrency exchanges.
 
