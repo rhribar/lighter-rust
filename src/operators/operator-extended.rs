@@ -41,7 +41,6 @@ impl Operator for ExtendedOperator {
     async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse> {
         use serde_json::json;
         use chrono::{Utc, Duration};
-        use crate::http_client::HttpClient;
         validate_order(&order)?;
         if !self.is_configured() {
             return Err(PointsBotError::Auth("Operator requires API key, STARK private key, and vault ID".to_string()));
@@ -50,7 +49,6 @@ impl Operator for ExtendedOperator {
         let markets = extended_markets();
         let market_config = markets.get(&order.symbol)
             .ok_or_else(|| PointsBotError::InvalidParameter(format!("Market {} not found", order.symbol)))?;
-        print!("[DEBUG] Creating order for symbol: {}, side: {:?}", order.symbol, order.side);
 
         let side = match order.side.as_str().to_uppercase().as_str() {
             "BUY" => Side::Buy,

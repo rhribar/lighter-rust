@@ -5,10 +5,11 @@ use std::str::FromStr;
 
 use points_bot_rs::{
     BotConfig,
-    operators::{Operator, OrderRequest, OrderResponse, OrderType, HyperliquidOperator, create_hyperliquid_operator, ExtendedOperator},
+    operators::{Operator, OrderRequest, OrderResponse, OrderType, create_hyperliquid_operator, ExtendedOperator},
     fetchers::{HyperliquidFetcher, ExtendedFetcher, Fetcher},
     Side,
     PointsBotResult,
+    ExchangeName
 };
 
 async fn create_order(
@@ -52,12 +53,11 @@ async fn main() -> Result<()> {
     info!("Trading mode: {}", if config.trading_mode { "LIVE" } else { "SIMULATION" });
     info!("Wallet address: {}", config.wallet_address);
     
-    let exchange = "extended";
+    let exchange = ExchangeName::Hyperliquid;
     
     let fetcher: Box<dyn Fetcher> = match exchange {
-        "hyperliquid" => Box::new(HyperliquidFetcher::new()),
-        "extended" => Box::new(ExtendedFetcher::new()),
-        _ => panic!("No fetcher for: {}", exchange),
+        ExchangeName::Hyperliquid => Box::new(HyperliquidFetcher::new()),
+        ExchangeName::Extended => Box::new(ExtendedFetcher::new()),
     };
     
     match fetcher.get_account_data(&config.wallet_address).await {
@@ -77,9 +77,8 @@ async fn main() -> Result<()> {
     let private_key = config.hyperliquid_private_key.as_deref().expect("Missing hyperliquid_private_key in config");
     let wallet = LocalWallet::from_str(private_key)?;
     let operator: Box<dyn Operator> = match exchange {
-        "hyperliquid" => create_hyperliquid_operator(wallet).await,
-        "extended" => Box::new(ExtendedOperator::new().await),
-        _ => panic!("There no operator for: {}", exchange),
+        ExchangeName::Hyperliquid => create_hyperliquid_operator(wallet).await,
+        ExchangeName::Extended => Box::new(ExtendedOperator::new().await),
     };
     
     match create_order(operator, "BTC-USD", Side::Buy, "0.0001", "100000").await {

@@ -9,3 +9,4 @@ pub mod fetchers;
 pub mod operators;
 pub mod types;
 pub mod utils;
+pub mod asset_mapping;

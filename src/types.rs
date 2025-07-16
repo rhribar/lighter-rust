@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 /// Shared types used across the Points Bot
 /// 
 /// This module contains core types that are used by both fetchers and operators.
