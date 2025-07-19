@@ -29,7 +29,7 @@ pub trait Fetcher: Send + Sync {
     async fn get_supported_tokens(&self) -> PointsBotResult<Vec<String>>;
 
     /// Get funding rates for all supported pairs
-    async fn get_funding_rates(&self) -> PointsBotResult<Vec<FundingRate>>;
+    async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>>;
 
     /// Get the exchange name
     fn exchange_name(&self) -> ExchangeName;
@@ -102,7 +102,6 @@ pub struct FundingRateData {
 pub struct FundingRate {
     pub symbol: String,
     pub rate: Decimal,
-    pub next_funding_time: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,11 +118,11 @@ pub struct MarketInfo {
     pub symbol: String,
     pub base_asset: String,
     pub quote_asset: String,
-    pub status: MarketStatus,
-    pub min_order_size: String,
-    pub max_order_size: Option<String>,
-    pub price_precision: i32,
-    pub size_precision: i32,
+    pub bid_price: Decimal,
+    pub ask_price: Decimal,
+    pub leverage: Decimal,
+    pub funding_rate: Decimal,
+    pub min_order_size: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
-/// Async factory for HyperliquidOperator
-pub async fn create_hyperliquid_operator(wallet: LocalWallet) -> Box<dyn Operator> {
-    Box::new(HyperliquidOperator::new(wallet).await)
+/// Async factory for OperatorHyperliquid
+pub async fn create_operator_hyperliquid(wallet: LocalWallet) -> Box<dyn Operator> {
+    Box::new(OperatorHyperliquid::new(wallet).await)
 }
 // Only import the SDK and the Operator trait
 use async_trait::async_trait;
@@ -11,11 +11,11 @@ use ethers::signers::LocalWallet;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{ToPrimitive, FromPrimitive};
 
-pub struct HyperliquidOperator {
+pub struct OperatorHyperliquid {
     client: ExchangeClient,
 }
 
-impl HyperliquidOperator {
+impl OperatorHyperliquid {
     pub async fn new(wallet: LocalWallet) -> Self {
         // You may want to pass other args (Meta, vault_address, etc.)
         let client = ExchangeClient::new(
@@ -30,7 +30,7 @@ impl HyperliquidOperator {
 }
 
 #[async_trait]
-impl Operator for HyperliquidOperator {
+impl Operator for OperatorHyperliquid {
     async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse> {
         // Map OrderRequest to SDK ClientOrderRequest
         let asset_id = match order.symbol.to_lowercase().as_str() {
@@ -42,7 +42,7 @@ impl Operator for HyperliquidOperator {
         let price = order.price.unwrap_or(Decimal::ZERO).to_f64().unwrap_or(0.0);
         let quantity = order.quantity.to_f64().unwrap_or(0.0);
         let sdk_order = ClientOrderRequest {
-            asset: "BTC".to_string(),
+            asset: order.symbol.clone(),
             is_buy,
             limit_px: price,
             sz: quantity,
@@ -76,7 +76,7 @@ impl Operator for HyperliquidOperator {
     }
 
     async fn close_position(&self, _symbol: &str) -> PointsBotResult<super::base::ClosePositionResponse> {
-        Err(PointsBotError::Unknown("close_position not supported in HyperliquidOperator".to_string()))
+        Err(PointsBotError::Unknown("close_position not supported in OperatorHyperliquid".to_string()))
     }
 
     fn exchange_name(&self) -> ExchangeName {

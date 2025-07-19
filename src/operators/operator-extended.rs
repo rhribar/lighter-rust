@@ -6,14 +6,14 @@ use rust_decimal::Decimal;
 use crate::operators::{validate_order, format_symbol, generate_order_id, Operator, OrderRequest, OrderResponse, ClosePositionResponse};
 use crate::{ExchangeName, PointsBotResult, PointsBotError, current_timestamp};
 use crate::operators::init_extended_markets::{init_extended_markets, extended_markets, sign_limit_ioc, Side, hex_to_felt};
-pub struct ExtendedOperator {
+pub struct OperatorExtended {
     client: crate::operators::base::HttpClient,
     api_key: Option<String>,
     stark_private_key: Option<String>,
     vault_id: Option<u64>,
 }
 
-impl ExtendedOperator {
+impl OperatorExtended {
     pub async fn new() -> Self {
         let _ = init_extended_markets().await;
         let client = crate::operators::base::HttpClient::new(
@@ -37,7 +37,7 @@ impl ExtendedOperator {
 
 
 #[async_trait]
-impl Operator for ExtendedOperator {
+impl Operator for OperatorExtended {
     async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse> {
         use serde_json::json;
         use chrono::{Utc, Duration};

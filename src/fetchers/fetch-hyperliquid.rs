@@ -11,7 +11,7 @@ use rust_decimal::prelude::*;
 use crate::{
     ExchangeName, PointsBotResult, PointsBotError, str_to_decimal, current_timestamp
 };
-use super::base::{HttpClient, Fetcher, AccountBalance, Position, FundingRate, PositionSide};
+use super::base::{HttpClient, Fetcher, AccountBalance, Position, PositionSide, MarketInfo};
 
 /// Hyperliquid API response structures
 #[derive(Debug, Deserialize)]
@@ -34,7 +34,7 @@ struct HyperliquidMarginSummary {
 
 #[derive(Debug, Deserialize)]
 struct HyperliquidPosition {
-    coin: String,
+    coin: Option<String>,
     #[serde(rename = "entryPx")]
     entry_px: String,
     #[serde(rename = "liquidationPx")]
@@ -57,6 +57,8 @@ struct HyperliquidMeta {
 #[derive(Debug, Deserialize)]
 struct AssetCtx {
     name: String,
+    #[serde(rename = "maxLeverage")]
+    max_leverage: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,11 +68,11 @@ struct HyperliquidAssetCtx {
     mark_px: String,
 }
 
-pub struct HyperliquidFetcher {
+pub struct FetcherHyperliquid {
     client: HttpClient,
 }
 
-impl HyperliquidFetcher {
+impl FetcherHyperliquid {
     pub fn new() -> Self {
         let client = HttpClient::new(
             "https://api.hyperliquid.xyz".to_string(),
@@ -82,7 +84,7 @@ impl HyperliquidFetcher {
 }
 
 #[async_trait]
-impl Fetcher for HyperliquidFetcher {
+impl Fetcher for FetcherHyperliquid {
     async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountBalance> {
         let payload = json!({
             "type": "clearinghouseState",
@@ -90,7 +92,9 @@ impl Fetcher for HyperliquidFetcher {
         });
         
         let response = self.client.post("/info", &payload.to_string(), None).await?;
-        let account_data: HyperliquidAccountData = self.client.parse_json(response).await?;
+        let response_body = response.text().await?;
+        print!("[DEBUG] Raw API response body: {:?}", response_body);
+        let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
         
         let account_value = str_to_decimal(&account_data.margin_summary.account_value)?.to_f64().unwrap_or(0.0);
         let total_margin_used = str_to_decimal(&account_data.margin_summary.total_margin_used)?.to_f64().unwrap_or(0.0);
@@ -100,6 +104,9 @@ impl Fetcher for HyperliquidFetcher {
         
         let available_balance = withdrawable;
         let positions_count = account_data.asset_positions.len() as i32;
+
+        print!("[DEBUG] Account data: {:?}", account_data);
+        print!("[DEBUG] Asset positions: {:?}", account_data.asset_positions);
         
         Ok(AccountBalance {
             account_value,
@@ -121,10 +128,17 @@ impl Fetcher for HyperliquidFetcher {
         });
         
         let response = self.client.post("/info", &payload.to_string(), None).await?;
-        let account_data: HyperliquidAccountData = self.client.parse_json(response).await?;
+        let response_body = response.text().await?;
+        print!("[DEBUG] Raw API response body 1: {:?}", response_body);
+        let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
         
         let mut positions = Vec::new();
         for position in account_data.asset_positions {
+            if position.coin.is_none() {
+                print!("[DEBUG] Skipping position with missing coin field: {:?}", position);
+                continue;
+            }
+            
             let size_decimal = str_to_decimal(&position.szi)?;
             if size_decimal == Decimal::ZERO {
                 continue;
@@ -143,7 +157,7 @@ impl Fetcher for HyperliquidFetcher {
             let liquidation_price = str_to_decimal(&position.liquidation_px).ok().and_then(|d| d.to_f64());
             
             positions.push(Position {
-                symbol: position.coin,
+                symbol: position.coin.unwrap(),
                 size: size_decimal.abs().to_string(),
                 side,
                 entry_price,
@@ -163,7 +177,9 @@ impl Fetcher for HyperliquidFetcher {
         });
         
         let response = self.client.post("/info", &payload.to_string(), None).await?;
-        let meta_data: HyperliquidMeta = self.client.parse_json(response).await?;
+        let response_body = response.text().await?;
+        print!("[DEBUG] Raw API response body: {:?}", response_body);
+        let meta_data: HyperliquidMeta = serde_json::from_str(&response_body)?;
         
         let tokens = meta_data.universe.into_iter()
             .map(|asset| asset.name)
@@ -172,45 +188,52 @@ impl Fetcher for HyperliquidFetcher {
         Ok(tokens)
     }
     
-    async fn get_funding_rates(&self) -> PointsBotResult<Vec<FundingRate>> {
+    async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>> {
         let payload = json!({
             "type": "metaAndAssetCtxs"
         });
-        
+
         let response = self.client.post("/info", &payload.to_string(), None).await?;
         let data: serde_json::Value = self.client.parse_json(response).await?;
-        
+
         let data_array = data.as_array()
             .ok_or_else(|| PointsBotError::Parse("Response is not an array".to_string()))?;
-        
+
         if data_array.len() < 2 {
             return Err(PointsBotError::Parse("Response array too short".to_string()));
         }
-        
+
         let meta_data: HyperliquidMeta = serde_json::from_value(data_array[0].clone())
             .map_err(|e| PointsBotError::Parse(format!("Failed to parse meta: {}", e)))?;
-        
+
         let asset_ctxs: Vec<HyperliquidAssetCtx> = serde_json::from_value(data_array[1].clone())
             .map_err(|e| PointsBotError::Parse(format!("Failed to parse asset contexts: {}", e)))?;
-        
-        let mut funding_rates = Vec::new();
+
+        let mut markets = Vec::new();
         for (i, token_info) in meta_data.universe.iter().enumerate() {
             if i < asset_ctxs.len() {
                 let ctx = &asset_ctxs[i];
                 let funding_rate = str_to_decimal(&ctx.funding)?;
-                
-                funding_rates.push(FundingRate {
+                let bid_price = str_to_decimal(&ctx.mark_px)?;
+                let ask_price = str_to_decimal(&ctx.mark_px)?;
+
+                markets.push(MarketInfo {
                     symbol: token_info.name.clone(),
-                    rate: funding_rate * Decimal::from(8), // 8-hour projection as per Python
-                    next_funding_time: current_timestamp() + chrono::Duration::hours(1),
+                    base_asset: token_info.name.clone(),
+                    quote_asset: "USD".to_string(),
+                    bid_price,
+                    ask_price,
+                    leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)), // Use maxLeverage if available, default to 5
+                    funding_rate,
+                    min_order_size: None,
                 });
             }
         }
-        
-        Ok(funding_rates)
+
+        Ok(markets)
     }
     
     fn exchange_name(&self) -> ExchangeName {
         ExchangeName::Hyperliquid
     }
-} 
+}

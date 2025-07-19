@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     PointsBotResult, PointsBotError, ExchangeName, current_timestamp
 };
-use super::base::{HttpClient, Fetcher, AccountBalance, Position, FundingRate, PositionSide};
+use super::base::{HttpClient, Fetcher, AccountBalance, Position, MarketInfo, PositionSide};
 
 /// Extended API response wrapper
 #[derive(Debug, Deserialize)]
@@ -63,23 +63,37 @@ struct ExtendedMarketData {
     asset_name: String,
     #[serde(rename = "marketStats")]
     market_stats: ExtendedMarketStats,
+    #[serde(rename = "tradingConfig")]
+    trading_config: ExtendedTradingConfig,
 }
 
 #[derive(Debug, Deserialize)]
 struct ExtendedMarketStats {
     #[serde(rename = "fundingRate")]
     funding_rate: String,
-    #[serde(rename = "markPrice")]
-    mark_price: String,
+    #[serde(rename = "bidPrice")]
+    bid_price: String,
+    #[serde(rename = "askPrice")]
+    ask_price: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtendedTradingConfig {
+    #[serde(rename = "maxLeverage")]
+    max_leverage: String,
+    #[serde(rename = "minOrderSize")]
+    min_order_size: String, // TODO: should probably handle this better
+    #[serde(rename = "maxLimitOrderValue")]
+    max_limit_order_value: String,
 }
 
 /// Extended Exchange Fetcher
-pub struct ExtendedFetcher {
+pub struct FetcherExtended {
     client: HttpClient,
     api_key: Option<String>,
 }
 
-impl ExtendedFetcher {
+impl FetcherExtended {
     /// Create a new Extended fetcher
     pub fn new() -> Self {
         let client = HttpClient::new(
@@ -92,19 +106,6 @@ impl ExtendedFetcher {
         Self {
             client,
             api_key,
-        }
-    }
-    
-    /// Create an Extended fetcher with specific API key
-    pub fn with_api_key(api_key: String) -> Self {
-        let client = HttpClient::new(
-            "https://api.extended.exchange/api/v1".to_string(),
-            Some(1000),
-        );
-        
-        Self {
-            client,
-            api_key: Some(api_key),
         }
     }
     
@@ -127,7 +128,7 @@ impl ExtendedFetcher {
 }
 
 #[async_trait]
-impl Fetcher for ExtendedFetcher {
+impl Fetcher for FetcherExtended {
     async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountBalance> {
         if !self.is_authenticated() {
             return Err(PointsBotError::Auth("Extended API requires authentication".to_string()));
@@ -262,12 +263,14 @@ impl Fetcher for ExtendedFetcher {
             .collect())
     }
     
-    async fn get_funding_rates(&self) -> PointsBotResult<Vec<FundingRate>> {
-        // Public endpoint, no authentication required
-        let response = self.client.get("/info/markets", None).await?;
+    async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>> {
+        let headers = Some(HashMap::from([(
+            "User-Agent".to_string(), "rust-client".to_string()
+        )]));
+        let response = self.client.get("/info/markets", headers).await?;
         let data: ExtendedResponse<Vec<ExtendedMarketData>> = 
             self.client.parse_json(response).await?;
-        
+
         if data.status != "OK" {
             let error_msg = data.error
                 .map(|e| e.message)
@@ -277,25 +280,32 @@ impl Fetcher for ExtendedFetcher {
                 message: format!("Extended API error: {}", error_msg),
             });
         }
-        
+
         let markets = data.data.unwrap_or_default();
         let now = current_timestamp();
-        
-        let mut funding_rates = Vec::new();
+
+        let mut market_infos = Vec::new();
         for market in markets {
-            let rate = Decimal::from_str(&market.market_stats.funding_rate)?;
-            
-            funding_rates.push(FundingRate {
-                symbol: market.asset_name,
-                rate,
-                next_funding_time: now + chrono::Duration::hours(8), // Assuming 8-hour funding
+            let funding_rate = Decimal::from_str(&market.market_stats.funding_rate)?;
+            let bid_price = Decimal::from_str(&market.market_stats.bid_price)?;
+            let ask_price = Decimal::from_str(&market.market_stats.ask_price)?;
+
+            market_infos.push(MarketInfo {
+                symbol: market.asset_name.clone(),
+                base_asset: market.asset_name.clone(),
+                quote_asset: "USD".to_string(),
+                bid_price,
+                ask_price,
+                leverage: Decimal::from_str(&market.trading_config.max_leverage)?,
+                funding_rate,
+                min_order_size: Some(Decimal::from_str(&market.trading_config.min_order_size)?),
             });
         }
-        
-        Ok(funding_rates)
+
+        Ok(market_infos)
     }
     
     fn exchange_name(&self) -> ExchangeName {
         ExchangeName::Extended
     }
-} 
+}

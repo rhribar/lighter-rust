@@ -14,6 +14,8 @@ pub enum ExchangeName {
     Hyperliquid,
     #[serde(rename = "extended")]
     Extended,
+    #[serde(rename = "kraken")]
+    Kraken,
 }
 
 impl ExchangeName {
@@ -21,6 +23,7 @@ impl ExchangeName {
         match self {
             ExchangeName::Hyperliquid => "hyperliquid",
             ExchangeName::Extended => "extended",
+            ExchangeName::Kraken => "kraken",
         }
     }
 }
