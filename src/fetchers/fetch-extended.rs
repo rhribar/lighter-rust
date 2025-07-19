@@ -8,13 +8,14 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 use log::{error, info};
 use chrono::{DateTime, Utc};
 
 use crate::{
-    PointsBotResult, PointsBotError, ExchangeName, current_timestamp
+    str_to_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult
 };
-use super::base::{HttpClient, Fetcher, AccountBalance, Position, MarketInfo, PositionSide};
+use super::base::{HttpClient, Fetcher, AccountData, Position, MarketInfo, PositionSide};
 
 /// Extended API response wrapper
 #[derive(Debug, Deserialize)]
@@ -42,25 +43,26 @@ struct ExtendedBalanceData {
 
 #[derive(Debug, Deserialize)]
 struct ExtendedPositionData {
-    #[serde(rename = "assetName")]
-    asset_name: String,
+    market: String,
     side: String,
-    #[serde(rename = "positionValue")]
+    size: String,
+    #[serde(rename = "value")]
     position_value: String,
-    notional: String,
     margin: String,
-    #[serde(rename = "entryPrice")]
+    #[serde(rename = "openPrice")]
     entry_price: String,
     #[serde(rename = "markPrice")]
     mark_price: String,
-    #[serde(rename = "unrealizedPnl")]
+    #[serde(rename = "unrealisedPnl")]
     unrealized_pnl: String,
+    #[serde(rename = "liquidationPrice")]
+    liquidation_price: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct ExtendedMarketData {
-    #[serde(rename = "assetName")]
-    asset_name: String,
+    #[serde(rename = "name")]
+    name: String,
     #[serde(rename = "marketStats")]
     market_stats: ExtendedMarketStats,
     #[serde(rename = "tradingConfig")]
@@ -129,7 +131,7 @@ impl FetcherExtended {
 
 #[async_trait]
 impl Fetcher for FetcherExtended {
-    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountBalance> {
+    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData> {
         if !self.is_authenticated() {
             return Err(PointsBotError::Auth("Extended API requires authentication".to_string()));
         }
@@ -159,8 +161,13 @@ impl Fetcher for FetcherExtended {
         
         // Get positions to calculate total position value
         let positions_response = self.client.get("/user/positions", Some(headers)).await?;
+        
+        // Store the response body in a variable for reuse
+        let raw_positions_response = positions_response.text().await?;
+        // print!("[DEBUG] Raw positions response body: {:?}", raw_positions_response);
+
         let positions_data: ExtendedResponse<Vec<ExtendedPositionData>> = 
-            self.client.parse_json(positions_response).await?;
+            serde_json::from_str(&raw_positions_response)?;
         
         let positions = if positions_data.status == "OK" {
             positions_data.data.unwrap_or_default()
@@ -170,7 +177,7 @@ impl Fetcher for FetcherExtended {
         
         // Calculate total position value and margin
         let total_position_value = positions.iter()
-            .map(|pos| pos.notional.parse::<f64>().unwrap_or(0.0))
+            .map(|pos| pos.position_value.parse::<f64>().unwrap_or(0.0))
             .sum::<f64>();
         
         let total_margin = positions.iter()
@@ -181,86 +188,38 @@ impl Fetcher for FetcherExtended {
         let available_balance = balance.available_for_withdrawal.parse::<f64>().unwrap_or(0.0);
         let total_raw_usd = balance.balance.parse::<f64>().unwrap_or(0.0);
         
-        Ok(AccountBalance {
+        let positions = positions
+            .into_iter()
+            .filter_map(|pos| {
+                let side = match pos.side.to_uppercase().as_str() {
+                    "LONG" => PositionSide::Long,
+                    "SHORT" => PositionSide::Short,
+                    _ => return None,
+                };
+
+                Some(Position {
+                    symbol: AssetMapping::get_canonical_ticker(ExchangeName::Extended, &pos.market).unwrap_or_else(|| pos.market.clone()),
+                    side,
+                    size: str_to_decimal(&pos.size).ok()?.to_f64().unwrap_or(0.0),
+                    entry_price: str_to_decimal(&pos.entry_price).ok()?.to_f64().unwrap_or(0.0),
+                    unrealized_pnl: str_to_decimal(&pos.unrealized_pnl).ok()?.to_f64().unwrap_or(0.0),
+                    margin_used: str_to_decimal(&pos.margin).ok()?.to_f64().unwrap_or(0.0),
+                    liquidation_price: str_to_decimal(&pos.liquidation_price).ok().and_then(|d| d.to_f64()),
+                })
+            })
+            .collect();
+
+        Ok(AccountData {
             account_value,
             total_margin_used: total_margin,
             total_ntl_pos: total_position_value,
             total_raw_usd,
             withdrawable: available_balance,
             available_balance,
-            positions_count: positions.len() as i32,
+            positions,
             exchange: ExchangeName::Extended,
             timestamp: balance.updated_time,
         })
-    }
-    
-    async fn get_user_positions(&self, _address: &str) -> PointsBotResult<Vec<Position>> {
-        if !self.is_authenticated() {
-            return Err(PointsBotError::Auth("Extended API requires authentication".to_string()));
-        }
-        
-        let headers = self.get_auth_headers()?;
-        
-        let response = self.client.get("/user/positions", Some(headers)).await?;
-        let data: ExtendedResponse<Vec<ExtendedPositionData>> = 
-            self.client.parse_json(response).await?;
-        
-        if data.status != "OK" {
-            let error_msg = data.error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "Unknown error".to_string());
-            return Err(PointsBotError::Exchange {
-                code: data.status,
-                message: format!("Extended API error: {}", error_msg),
-            });
-        }
-        
-        let positions_data = data.data.unwrap_or_default();
-        
-        let mut positions = Vec::new();
-        for pos_data in positions_data {
-            let side = match pos_data.side.as_str() {
-                "long" => PositionSide::Long,
-                "short" => PositionSide::Short,
-                _ => continue, // Skip unknown sides
-            };
-            
-            positions.push(Position {
-                symbol: pos_data.asset_name,
-                size: pos_data.notional,
-                side,
-                entry_price: pos_data.entry_price.parse::<f64>().unwrap_or(0.0),
-                mark_price: pos_data.mark_price.parse::<f64>().unwrap_or(0.0),
-                unrealized_pnl: pos_data.unrealized_pnl.parse::<f64>().unwrap_or(0.0),
-                margin_used: pos_data.margin.parse::<f64>().unwrap_or(0.0),
-                liquidation_price: None, // Extended doesn't provide liquidation price
-            });
-        }
-        
-        Ok(positions)
-    }
-    
-    async fn get_supported_tokens(&self) -> PointsBotResult<Vec<String>> {
-        // Public endpoint, no authentication required
-        let response = self.client.get("/info/markets", None).await?;
-        let data: ExtendedResponse<Vec<ExtendedMarketData>> = 
-            self.client.parse_json(response).await?;
-        
-        if data.status != "OK" {
-            let error_msg = data.error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "Unknown error".to_string());
-            return Err(PointsBotError::Exchange {
-                code: data.status,
-                message: format!("Extended API error: {}", error_msg),
-            });
-        }
-        
-        let markets = data.data.unwrap_or_default();
-        
-        Ok(markets.into_iter()
-            .map(|market| market.asset_name)
-            .collect())
     }
     
     async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>> {
@@ -282,17 +241,19 @@ impl Fetcher for FetcherExtended {
         }
 
         let markets = data.data.unwrap_or_default();
-        let now = current_timestamp();
 
         let mut market_infos = Vec::new();
         for market in markets {
+            let symbol = AssetMapping::get_canonical_ticker(ExchangeName::Extended, &market.name)
+                .unwrap_or_else(|| market.name.clone());
+
             let funding_rate = Decimal::from_str(&market.market_stats.funding_rate)?;
             let bid_price = Decimal::from_str(&market.market_stats.bid_price)?;
             let ask_price = Decimal::from_str(&market.market_stats.ask_price)?;
 
             market_infos.push(MarketInfo {
-                symbol: market.asset_name.clone(),
-                base_asset: market.asset_name.clone(),
+                symbol: symbol.clone(),
+                base_asset: symbol,
                 quote_asset: "USD".to_string(),
                 bid_price,
                 ask_price,
@@ -303,9 +264,5 @@ impl Fetcher for FetcherExtended {
         }
 
         Ok(market_infos)
-    }
-    
-    fn exchange_name(&self) -> ExchangeName {
-        ExchangeName::Extended
     }
 }

@@ -127,32 +127,3 @@ pub fn calculate_order_value(order: &OrderRequest) -> PointsBotResult<Decimal> {
     }
 }
 
-/// Format symbol for exchange-specific requirements
-pub fn format_symbol(symbol: &str, exchange_format: &str) -> String {
-    match exchange_format {
-        "hyperliquid" => {
-            // Hyperliquid uses symbols like "BTC", "ETH" (no pairs)
-            symbol.split('-').next().unwrap_or(symbol).to_string()
-        }
-        "extended" => {
-            // Extended uses symbols like "BTC-USD", "ETH-USD"
-            if symbol.contains('-') {
-                symbol.to_string()
-            } else {
-                format!("{}-USD", symbol)
-            }
-        }
-        _ => symbol.to_string(),
-    }
-}
-
-/// Generate unique order ID
-pub fn generate_order_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    
-    format!("order_{}", timestamp)
-} 

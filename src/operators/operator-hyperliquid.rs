@@ -10,6 +10,7 @@ use hyperliquid_rust_sdk::{ExchangeClient, ClientOrderRequest, ClientOrder, Clie
 use ethers::signers::LocalWallet;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{ToPrimitive, FromPrimitive};
+use crate::asset_mapping::AssetMapping;
 
 pub struct OperatorHyperliquid {
     client: ExchangeClient,
@@ -31,13 +32,10 @@ impl OperatorHyperliquid {
 
 #[async_trait]
 impl Operator for OperatorHyperliquid {
-    async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse> {
-        // Map OrderRequest to SDK ClientOrderRequest
-        let asset_id = match order.symbol.to_lowercase().as_str() {
-            "BTC" => "BTC-USD".to_string(),
-            "eth" => "2".to_string(),
-            _ => "0".to_string(),
-        };
+    async fn create_order(&self, mut order: OrderRequest) -> PointsBotResult<OrderResponse> {
+        order.symbol = AssetMapping::get_exchange_ticker(ExchangeName::Hyperliquid, &order.symbol)
+            .unwrap_or_else(|| order.symbol.clone());
+
         let is_buy = matches!(order.side, crate::Side::Buy);
         let price = order.price.unwrap_or(Decimal::ZERO).to_f64().unwrap_or(0.0);
         let quantity = order.quantity.to_f64().unwrap_or(0.0);

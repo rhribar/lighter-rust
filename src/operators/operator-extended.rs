@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use rust_decimal::Decimal;
-use crate::operators::{validate_order, format_symbol, generate_order_id, Operator, OrderRequest, OrderResponse, ClosePositionResponse};
-use crate::{ExchangeName, PointsBotResult, PointsBotError, current_timestamp};
+use crate::operators::{validate_order, Operator, OrderRequest, OrderResponse, ClosePositionResponse};
+use crate::{current_timestamp, AssetMapping, ExchangeName, PointsBotError, PointsBotResult};
 use crate::operators::init_extended_markets::{init_extended_markets, extended_markets, sign_limit_ioc, Side, hex_to_felt};
 pub struct OperatorExtended {
     client: crate::operators::base::HttpClient,
@@ -38,7 +38,7 @@ impl OperatorExtended {
 
 #[async_trait]
 impl Operator for OperatorExtended {
-    async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse> {
+    async fn create_order(&self, mut order: OrderRequest) -> PointsBotResult<OrderResponse> {
         use serde_json::json;
         use chrono::{Utc, Duration};
         validate_order(&order)?;
@@ -46,6 +46,8 @@ impl Operator for OperatorExtended {
             return Err(PointsBotError::Auth("Operator requires API key, STARK private key, and vault ID".to_string()));
         }
         let _ = init_extended_markets();
+        order.symbol = AssetMapping::get_exchange_ticker(ExchangeName::Extended, &order.symbol)
+            .unwrap_or_else(|| order.symbol.clone());
         let markets = extended_markets();
         let market_config = markets.get(&order.symbol)
             .ok_or_else(|| PointsBotError::InvalidParameter(format!("Market {} not found", order.symbol)))?;
@@ -130,7 +132,6 @@ impl Operator for OperatorExtended {
         })
     }
 
-    // async fn close_position(&self, symbol: &str) -> PointsBotResult<ClosePositionResponse> {
     async fn close_position(&self, _symbol: &str) -> PointsBotResult<ClosePositionResponse> {
         Err(PointsBotError::Unknown("close_position not implemented".to_string()))
     }

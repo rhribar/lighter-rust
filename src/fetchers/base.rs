@@ -20,19 +20,10 @@ pub use crate::http_client::HttpClient;
 #[async_trait]
 pub trait Fetcher: Send + Sync {
     /// Get account balance and summary data
-    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountBalance>;
+    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData>;
 
-    /// Get user positions for all trading pairs
-    async fn get_user_positions(&self, address: &str) -> PointsBotResult<Vec<Position>>;
-
-    /// Get list of supported trading pairs/tokens
-    async fn get_supported_tokens(&self) -> PointsBotResult<Vec<String>>;
-
-    /// Get funding rates for all supported pairs
+    /// Get markets
     async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>>;
-
-    /// Get the exchange name
-    fn exchange_name(&self) -> ExchangeName;
 }
 
 // ===== FETCHER TYPES =====
@@ -46,14 +37,14 @@ pub struct MarginSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountBalance {
+pub struct AccountData {
     pub account_value: f64,
     pub total_margin_used: f64,
     pub total_ntl_pos: f64,
     pub total_raw_usd: f64,
     pub withdrawable: f64,
     pub available_balance: f64,
-    pub positions_count: i32,
+    pub positions: Vec<Position>,
     pub exchange: ExchangeName,
     pub timestamp: i64,
 }
@@ -69,10 +60,9 @@ pub enum PositionSide {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     pub symbol: String,
-    pub size: String,
+    pub size: f64,
     pub side: PositionSide,
     pub entry_price: f64,
-    pub mark_price: f64,
     pub unrealized_pnl: f64,
     pub margin_used: f64,
     pub liquidation_price: Option<f64>,

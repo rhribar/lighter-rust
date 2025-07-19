@@ -68,6 +68,12 @@ async fn main() -> Result<()> {
         (Ok(hyperliquid_account), Ok(extended_account)) => {
             min_available_balance = Some(hyperliquid_account.available_balance.min(extended_account.available_balance));
             info!("Minimum Available Balance: ${:.2}", min_available_balance.unwrap());
+
+            // Log positions from Hyperliquid
+            info!("Hyperliquid Positions: {:?}", hyperliquid_account);
+
+            // Log positions from Extended
+            info!("Extended Positions: {:?}", extended_account.positions);
         }
         (Err(e), _) => {
             error!("Failed to get account data from Hyperliquid: {:?}", e);
@@ -126,7 +132,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    if let (Some(min_balance), Some(&(ref symbol, hyper_rate, ext_rate, _, _, _))) = (
+    /* if let (Some(min_balance), Some(&(ref symbol, hyper_rate, ext_rate, _, _, _))) = (
         min_available_balance,
         arbitrage_opportunities.first(),
     ) {
@@ -177,7 +183,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            match create_order(long_operator, &format!("{}-USD", symbol), long_side, &amount_str, &ext_market.ask_price.to_string()).await {
+            match create_order(long_operator, symbol, long_side, &amount_str, &ext_market.ask_price.to_string()).await {
                 Ok(order_result) => {
                     info!("Long order placed: {:?}", order_result);
                             info!("Order ID: {}", order_result.order_id);
@@ -199,6 +205,6 @@ async fn main() -> Result<()> {
             error!("Failed to find matching markets for symbol: {}", symbol);
         }
     }
-    
+     */
     Ok(())
 }
