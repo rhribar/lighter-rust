@@ -1,4 +1,6 @@
-dd# Points Bot - Exchange Fetchers
+export TRADING_ENV=live; export RUST_LOG=info cargo run
+
+# Points Bot - Exchange Fetchers
 
 A modular Python application for fetching points and trading data from various cryptocurrency exchanges.
 

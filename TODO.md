@@ -12,3 +12,6 @@ v_0-25-07-19:
 3. if open close position and open position, otherwise just open (first time)
 4. add cron job tokio
 5. when closing position save it in json
+
+
+1. Worsen price so hft takers dont arb it

@@ -4,13 +4,13 @@ use rust_decimal::{prelude::FromPrimitive, Decimal};
 use std::str::FromStr;
 
 use points_bot_rs::{
-    fetchers::{Fetcher, FetcherExtended, FetcherHyperliquid, MarketInfo},
+    fetchers::{hyperliquid, Fetcher, FetcherExtended, FetcherHyperliquid, MarketInfo, Position, PositionSide},
     operators::{create_operator_hyperliquid, Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType},
     BotConfig, ExchangeName, PointsBotResult, Side,
 };
 
 async fn create_order(
-    operator: Box<dyn Operator>,
+    operator: &dyn Operator,
     symbol: &str,
     side: Side,
     quantity: &str,
@@ -64,24 +64,35 @@ async fn main() -> Result<()> {
     let mut arbitrage_opportunities = Vec::new();
 
     // Fetch account data
-    match (fetcher_hyperliquid.get_account_data(&config.wallet_address).await, fetcher_extended.get_account_data(&config.wallet_address).await) {
+    let hyperliquid_result = fetcher_hyperliquid.get_account_data(&config.wallet_address).await;
+    let extended_result = fetcher_extended.get_account_data(&config.wallet_address).await;
+
+    let (hyperliquid_account, extended_account) = match (hyperliquid_result, extended_result) {
         (Ok(hyperliquid_account), Ok(extended_account)) => {
             min_available_balance = Some(hyperliquid_account.available_balance.min(extended_account.available_balance));
             info!("Minimum Available Balance: ${:.2}", min_available_balance.unwrap());
 
             // Log positions from Hyperliquid
-            info!("Hyperliquid Positions: {:?}", hyperliquid_account);
+            info!("Hyperliquid Positions: {:?}", hyperliquid_account.positions);
 
             // Log positions from Extended
             info!("Extended Positions: {:?}", extended_account.positions);
+
+            (Some(hyperliquid_account), Some(extended_account))
         }
-        (Err(e), _) => {
+        (Err(e), Ok(extended_account)) => {
             error!("Failed to get account data from Hyperliquid: {:?}", e);
+            (None, Some(extended_account))
         }
-        (_, Err(e)) => {
+        (Ok(hyperliquid_account), Err(e)) => {
             error!("Failed to get account data from Extended: {:?}", e);
+            (Some(hyperliquid_account), None)
         }
-    }
+        (Err(e1), Err(e2)) => {
+            error!("Failed to get account data from both sources: {:?}, {:?}", e1, e2);
+            (None, None)
+        }
+    };
 
     let mut hyperliquid_markets: Vec<MarketInfo> = Vec::new();
     let mut extended_markets: Vec<MarketInfo> = Vec::new();
@@ -91,9 +102,68 @@ async fn main() -> Result<()> {
         (Ok(hyperliquid_m), Ok(extended_m)) => {
             info!("Fetched {} funding rates from Hyperliquid", hyperliquid_m.len());
             info!("Fetched {} funding rates from Extended", extended_m.len());
-
             hyperliquid_markets = hyperliquid_m.clone();
             extended_markets = extended_m.clone();
+
+            let hyperliquid_positions: Vec<Position> = hyperliquid_account.as_ref().map_or(vec![], |a| a.positions.clone());
+            let extended_positions: Vec<Position> = extended_account.as_ref().map_or(vec![], |a| a.positions.clone());
+
+            if !hyperliquid_positions.is_empty() || !extended_positions.is_empty() {
+                info!("Closing existing positions...");
+
+                for position in &hyperliquid_positions {
+                    if let Some(market) = hyperliquid_markets.iter().find(|m| m.symbol == position.symbol) {
+                        let bips_offset = Decimal::from_f64(0.001).unwrap(); // 10 bips = 0.1%
+                        let (price_adjusted, side) = match position.side {
+                            PositionSide::Long => (market.ask_price * (Decimal::ONE + bips_offset), Side::Sell),
+                            PositionSide::Short => (market.bid_price * (Decimal::ONE - bips_offset), Side::Buy),
+                        };
+
+                        // Limit the number of decimals to match the original price
+                        let original_decimals = market.ask_price.scale();
+                        let price_adjusted = price_adjusted.round_dp(original_decimals);
+
+                        let quantity = position.size.to_string();
+                        let price_adjusted_str = price_adjusted.to_string();
+                        match create_order(operator_hyperliquid.as_ref(), &position.symbol, side, &quantity, &price_adjusted_str).await {
+                            Ok(order_result) => {
+                                info!("Closed Hyperliquid position: {:?}", order_result);
+                            }
+                            Err(e) => {
+                                error!("Failed to close Hyperliquid position: {:?}", e);
+                            }
+                        }
+                    } else {
+                        error!("Market data not found for symbol: {}", position.symbol);
+                    }
+                }
+
+                for position in &extended_positions {
+                    if let Some(market) = extended_markets.iter().find(|m| m.symbol == position.symbol) {
+                        let (price_adjusted, side) = match position.side {
+                            PositionSide::Long => (market.ask_price, Side::Sell),
+                            PositionSide::Short => (market.bid_price, Side::Buy),
+                        };
+
+                        let quantity = position.size.to_string();
+                        let original_decimals = market.ask_price.scale();
+                        let price_adjusted = price_adjusted.round_dp(original_decimals);
+
+                        match create_order(operator_extended.as_ref(), &position.symbol, side, &quantity, &price_adjusted.to_string()).await {
+                            Ok(order_result) => {
+                                info!("Closed Extended position: {:?}", order_result);
+                            }
+                            Err(e) => {
+                                error!("Failed to close Extended position: {:?}", e);
+                            }
+                        }
+                    } else {
+                        error!("Market data not found for symbol: {}", position.symbol);
+                    }
+                }
+            } else {
+                info!("No positions available to close.");
+            }
 
             for hyper_market in &hyperliquid_m {
                 if let Some(ext_market) = extended_m.iter().find(|r| r.symbol == hyper_market.symbol) {
@@ -132,7 +202,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    /* if let (Some(min_balance), Some(&(ref symbol, hyper_rate, ext_rate, _, _, _))) = (
+/*     if let (Some(min_balance), Some(&(ref symbol, hyper_rate, ext_rate, _, _, _))) = (
         min_available_balance,
         arbitrage_opportunities.first(),
     ) {
@@ -164,7 +234,7 @@ async fn main() -> Result<()> {
             info!("Short Operator: {}, Long Operator: {}", short_operator.exchange_name().as_str(), long_operator.exchange_name().as_str());
             info!("Amount: {}, Min Leverage: {}", amount_str, min_leverage);
 
-            match create_order(short_operator, symbol, short_side, &amount_str, &hyper_market.ask_price.to_string()).await {
+            match create_order(short_operator.as_ref(), symbol, short_side, &amount_str, &hyper_market.ask_price.to_string()).await {
                 Ok(order_result) => {
                     info!("Order executed successfully!");
                     info!("Order ID: {}", order_result.order_id);
@@ -183,7 +253,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            match create_order(long_operator, symbol, long_side, &amount_str, &ext_market.ask_price.to_string()).await {
+            match create_order(long_operator.as_ref(), symbol, long_side, &amount_str, &ext_market.ask_price.to_string()).await {
                 Ok(order_result) => {
                     info!("Long order placed: {:?}", order_result);
                             info!("Order ID: {}", order_result.order_id);
@@ -204,7 +274,7 @@ async fn main() -> Result<()> {
         } else {
             error!("Failed to find matching markets for symbol: {}", symbol);
         }
-    }
-     */
+    } */
+    
     Ok(())
 }

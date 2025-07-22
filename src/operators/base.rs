@@ -94,21 +94,20 @@ pub fn validate_order(order: &OrderRequest) -> PointsBotResult<()> {
         }
         _ => {}
     }
-    
     Ok(())
 }
 
-/// Calculate order value
-pub fn calculate_order_value(order: &OrderRequest) -> PointsBotResult<Decimal> {
+/// Calculate the total cost of an order
+pub fn calculate_order_cost(order: &OrderRequest) -> PointsBotResult<Decimal> {
     match order.order_type {
         OrderType::Market => {
             // For market orders, we can't calculate exact value without current price
             // Return quantity as approximation
             Ok(order.quantity)
         }
-        OrderType::Limit => {
+        OrderType::Limit | OrderType::StopLimit => {
             let price = order.price.ok_or_else(|| {
-                PointsBotError::InvalidParameter("Price required for limit order".to_string())
+                PointsBotError::InvalidParameter("Price required for limit or stop limit order".to_string())
             })?;
             Ok(order.quantity * price)
         }
@@ -117,12 +116,6 @@ pub fn calculate_order_value(order: &OrderRequest) -> PointsBotResult<Decimal> {
                 PointsBotError::InvalidParameter("Stop price required for stop order".to_string())
             })?;
             Ok(order.quantity * stop_price)
-        }
-        OrderType::StopLimit => {
-            let price = order.price.ok_or_else(|| {
-                PointsBotError::InvalidParameter("Price required for stop limit order".to_string())
-            })?;
-            Ok(order.quantity * price)
         }
     }
 }
