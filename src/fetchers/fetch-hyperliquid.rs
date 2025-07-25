@@ -122,11 +122,11 @@ impl Fetcher for FetcherHyperliquid {
         let response_body = response.text().await?;
         let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
 
-        let account_value = str_to_decimal(&account_data.margin_summary.account_value)?.to_f64().unwrap_or(0.0);
-        let total_margin_used = str_to_decimal(&account_data.margin_summary.total_margin_used)?.to_f64().unwrap_or(0.0);
-        let total_ntl_pos = str_to_decimal(&account_data.margin_summary.total_ntl_pos)?.to_f64().unwrap_or(0.0);
-        let total_raw_usd = str_to_decimal(&account_data.margin_summary.total_raw_usd)?.to_f64().unwrap_or(0.0);
-        let withdrawable = str_to_decimal(&account_data.withdrawable)?.to_f64().unwrap_or(0.0);
+        let account_value = str_to_decimal(&account_data.margin_summary.account_value)?;
+        let total_margin_used = str_to_decimal(&account_data.margin_summary.total_margin_used)?;
+        let total_ntl_pos = str_to_decimal(&account_data.margin_summary.total_ntl_pos)?;
+        let total_raw_usd = str_to_decimal(&account_data.margin_summary.total_raw_usd)?;
+        let withdrawable = str_to_decimal(&account_data.withdrawable)?;
 
         let available_balance = withdrawable;
 
@@ -143,14 +143,14 @@ impl Fetcher for FetcherHyperliquid {
                 PositionSide::Short
             };
 
-            let entry_price = str_to_decimal(&position.entry_px).ok()?.to_f64().unwrap_or(0.0);
-            let unrealized_pnl = str_to_decimal(&position.unrealized_pnl).ok()?.to_f64().unwrap_or(0.0);
-            let margin_used = str_to_decimal(position.margin_used.as_deref().unwrap_or("0")).ok()?.to_f64().unwrap_or(0.0);
-            let liquidation_price = str_to_decimal(position.liquidation_px.as_deref().unwrap_or("0")).ok()?.to_f64().unwrap_or(0.0);
+            let entry_price = str_to_decimal(&position.entry_px).ok()?;
+            let unrealized_pnl = str_to_decimal(&position.unrealized_pnl).ok()?;
+            let margin_used = str_to_decimal(position.margin_used.as_deref().unwrap_or("0")).ok()?;
+            let liquidation_price = str_to_decimal(position.liquidation_px.as_deref().unwrap_or("0")).ok()?;
 
             Some(Position {
                 symbol: AssetMapping::get_canonical_ticker(ExchangeName::Hyperliquid, &position.coin.clone().unwrap_or_default()).unwrap_or_else(|| position.coin.clone().unwrap_or_default()),
-                size: size_decimal.abs().to_f64().unwrap_or(0.0),
+                size: size_decimal.abs(),
                 side,
                 entry_price,
                 unrealized_pnl,

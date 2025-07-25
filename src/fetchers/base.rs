@@ -38,12 +38,12 @@ pub struct MarginSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountData {
-    pub account_value: f64,
-    pub total_margin_used: f64,
-    pub total_ntl_pos: f64,
-    pub total_raw_usd: f64,
-    pub withdrawable: f64,
-    pub available_balance: f64,
+    pub account_value: Decimal,
+    pub total_margin_used: Decimal,
+    pub total_ntl_pos: Decimal,
+    pub total_raw_usd: Decimal,
+    pub withdrawable: Decimal,
+    pub available_balance: Decimal,
     pub positions: Vec<Position>,
     pub exchange: ExchangeName,
     pub timestamp: i64,
@@ -60,12 +60,12 @@ pub enum PositionSide {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     pub symbol: String,
-    pub size: f64,
+    pub size: Decimal,
     pub side: PositionSide,
-    pub entry_price: f64,
-    pub unrealized_pnl: f64,
-    pub margin_used: f64,
-    pub liquidation_price: Option<f64>,
+    pub entry_price: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub margin_used: Decimal,
+    pub liquidation_price: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,10 +80,10 @@ pub struct PositionsData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FundingRateData {
-    pub funding_rate: f64,
-    pub funding_rate_8h: f64,
-    pub mark_price: f64,
-    pub index_price: Option<f64>,
+    pub funding_rate: Decimal,
+    pub funding_rate_8h: Decimal,
+    pub mark_price: Decimal,
+    pub index_price: Option<Decimal>,
     pub next_funding_time: Option<i64>,
     pub exchange: ExchangeName,
 }
@@ -128,13 +128,13 @@ pub enum MarketStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketStatistics {
     pub symbol: String,
-    pub volume_24h: f64,
-    pub price_change_24h: f64,
-    pub high_24h: f64,
-    pub low_24h: f64,
-    pub last_price: f64,
-    pub mark_price: f64,
-    pub funding_rate: f64,
+    pub volume_24h: Decimal,
+    pub price_change_24h: Decimal,
+    pub high_24h: Decimal,
+    pub low_24h: Decimal,
+    pub last_price: Decimal,
+    pub mark_price: Decimal,
+    pub funding_rate: Decimal,
 }
 
 // ===== TOKEN/ASSET TYPES =====

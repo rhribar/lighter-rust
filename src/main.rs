@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     let fetcher_extended = Box::new(FetcherExtended::new());
 
     let private_key = config.hyperliquid_private_key.as_deref().expect("Missing hyperliquid_private_key in config");
-    let wallet = LocalWallet::from_str(private_key)?;
+    let wallet = LocalWallet::from_str(private_key).ok().expect("Failed to create wallet from private key");
     let operator_hyperliquid = create_operator_hyperliquid(wallet).await;
     let operator_extended = Box::new(OperatorExtended::new().await);
 
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
                         let original_decimals = market.ask_price.scale();
                         let price_adjusted = price_adjusted.round_dp(original_decimals);
 
-                        let quantity = position.size.to_string();
+                        let quantity = position.size.abs().to_string();
                         let price_adjusted_str = price_adjusted.to_string();
                         match create_order(operator_hyperliquid.as_ref(), &position.symbol, side, &quantity, &price_adjusted_str).await {
                             Ok(order_result) => {
@@ -140,9 +140,10 @@ async fn main() -> Result<()> {
 
                 for position in &extended_positions {
                     if let Some(market) = extended_markets.iter().find(|m| m.symbol == position.symbol) {
+                        let bips_offset = Decimal::from_str("0.005").unwrap(); // 10 bips = 0.1%
                         let (price_adjusted, side) = match position.side {
-                            PositionSide::Long => (market.ask_price, Side::Sell),
-                            PositionSide::Short => (market.bid_price, Side::Buy),
+                            PositionSide::Long => (market.ask_price * (Decimal::ONE + bips_offset), Side::Sell),
+                            PositionSide::Short => (market.bid_price * (Decimal::ONE - bips_offset), Side::Buy),
                         };
 
                         let quantity = position.size.to_string();
@@ -202,7 +203,7 @@ async fn main() -> Result<()> {
         }
     }
 
-/*     if let (Some(min_balance), Some(&(ref symbol, hyper_rate, ext_rate, _, _, _))) = (
+    if let (Some(min_balance), Some(&(ref symbol, hyper_rate, ext_rate, _, _, _))) = (
         min_available_balance,
         arbitrage_opportunities.first(),
     ) {
@@ -211,8 +212,8 @@ async fn main() -> Result<()> {
             extended_markets.iter().find(|m| m.symbol == *symbol),
         ) {
             // Calculate the amount based on ask prices and min_available_balance
-            let amount_hyper = Decimal::from_f64(min_balance).unwrap() / hyper_market.ask_price;
-            let amount_ext = Decimal::from_f64(min_balance).unwrap() / ext_market.ask_price;
+            let amount_hyper = Decimal::from_str(&min_balance.to_string()).unwrap() / hyper_market.ask_price;
+            let amount_ext = Decimal::from_str(&min_balance.to_string()).unwrap() / ext_market.ask_price;
             let min_order_size = hyper_market.min_order_size.unwrap_or(Decimal::ZERO).max(ext_market.min_order_size.unwrap_or(Decimal::ZERO));
             if min_order_size.is_zero() {
                 info!("No minimum order size specified for either market. Proceeding with the order.");
@@ -274,7 +275,7 @@ async fn main() -> Result<()> {
         } else {
             error!("Failed to find matching markets for symbol: {}", symbol);
         }
-    } */
-    
+    }
+
     Ok(())
 }

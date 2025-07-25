@@ -8,7 +8,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 use rust_decimal::Decimal;
-use rust_decimal::prelude::*;
 use log::{error, info};
 use chrono::{DateTime, Utc};
 
@@ -177,16 +176,16 @@ impl Fetcher for FetcherExtended {
         
         // Calculate total position value and margin
         let total_position_value = positions.iter()
-            .map(|pos| pos.position_value.parse::<f64>().unwrap_or(0.0))
-            .sum::<f64>();
+            .map(|pos| pos.position_value.parse::<Decimal>().unwrap_or(Decimal::ZERO))
+            .sum::<Decimal>();
         
         let total_margin = positions.iter()
-            .map(|pos| pos.margin.parse::<f64>().unwrap_or(0.0))
-            .sum::<f64>();
+            .map(|pos| pos.margin.parse::<Decimal>().unwrap_or(Decimal::ZERO))
+            .sum::<Decimal>();
         
-        let account_value = balance.equity.parse::<f64>().unwrap_or(0.0);
-        let available_balance = balance.available_for_withdrawal.parse::<f64>().unwrap_or(0.0);
-        let total_raw_usd = balance.balance.parse::<f64>().unwrap_or(0.0);
+        let account_value = balance.equity.parse::<Decimal>().unwrap_or(Decimal::ZERO);
+        let available_balance = balance.available_for_withdrawal.parse::<Decimal>().unwrap_or(Decimal::ZERO);
+        let total_raw_usd = balance.balance.parse::<Decimal>().unwrap_or(Decimal::ZERO);
         
         let positions = positions
             .into_iter()
@@ -200,11 +199,11 @@ impl Fetcher for FetcherExtended {
                 Some(Position {
                     symbol: AssetMapping::get_canonical_ticker(ExchangeName::Extended, &pos.market).unwrap_or_else(|| pos.market.clone()),
                     side,
-                    size: str_to_decimal(&pos.size).ok()?.to_f64().unwrap_or(0.0),
-                    entry_price: str_to_decimal(&pos.entry_price).ok()?.to_f64().unwrap_or(0.0),
-                    unrealized_pnl: str_to_decimal(&pos.unrealized_pnl).ok()?.to_f64().unwrap_or(0.0),
-                    margin_used: str_to_decimal(&pos.margin).ok()?.to_f64().unwrap_or(0.0),
-                    liquidation_price: str_to_decimal(&pos.liquidation_price).ok().and_then(|d| d.to_f64()),
+                    size: str_to_decimal(&pos.size).ok()?.abs(),
+                    entry_price: str_to_decimal(&pos.entry_price).ok()?,
+                    unrealized_pnl: str_to_decimal(&pos.unrealized_pnl).ok()?,
+                    margin_used: str_to_decimal(&pos.margin).ok()?,
+                    liquidation_price: str_to_decimal(&pos.liquidation_price).ok(),
                 })
             })
             .collect();
