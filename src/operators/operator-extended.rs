@@ -114,7 +114,7 @@ impl Operator for OperatorExtended {
         headers.insert("X-Api-Key".to_string(), api_key.clone());
         headers.insert("User-Agent".to_string(), "points-bot-rs/1.0".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        print!("[DEBUG] Sending order request to {}: {:?} {:?}", url, order_payload, headers);
+        // println!("[DEBUG] Sending order request to {}: {:?} {:?}", url, order_payload, headers);
         let response = self.client.post(url, &order_payload.to_string(), Some(headers)).await.map_err(|e| PointsBotError::Unknown(format!("HTTP error: {e}")))?;
 
         let response_text = response.text().await.map_err(|e| PointsBotError::Unknown(format!("Response error: {e}")))?;

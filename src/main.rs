@@ -1,6 +1,10 @@
 use anyhow::Result;
+use chrono::Utc;
+use cron::Schedule;
 use log::{error, info};
 use rust_decimal::{prelude::FromPrimitive, Decimal};
+use std::str::FromStr;
+use tokio::time::sleep;
 
 use points_bot_rs::{
     fetchers::{AccountData, Fetcher, FetcherExtended, FetcherHyperliquid, MarketInfo, Position},
@@ -11,7 +15,6 @@ use points_bot_rs::{
 #[tokio::main]
 async fn main() -> Result<()> {
     use ethers::signers::LocalWallet;
-    use std::str::FromStr;
     env_logger::init();
 
     let config = BotConfig::from_env().unwrap_or_else(|e| {
@@ -30,9 +33,34 @@ async fn main() -> Result<()> {
     let operator_hyperliquid = create_operator_hyperliquid(wallet).await;
     let operator_extended = Box::new(OperatorExtended::new().await);
 
+    let schedule = Schedule::from_str("0 55 * * * *").unwrap(); // every hour at xx:55
+
+    loop {
+        let now = Utc::now();
+        if let Some(next) = schedule.upcoming(Utc).next() {
+            let duration = (next - now).to_std().unwrap();
+            info!("Next trade scheduled at: {:?}", next);
+            sleep(duration).await;
+
+            trade(config.clone(),
+                  fetcher_extended.as_ref(),
+                  fetcher_hyperliquid.as_ref(),
+                  operator_hyperliquid.as_ref(),
+                  operator_extended.as_ref(),
+            ).await;
+        }
+    }
+}
+
+
+async fn trade(config: BotConfig, 
+               fetcher_extended: &dyn Fetcher, 
+               fetcher_hyperliquid: &dyn Fetcher, 
+               operator_hyperliquid: &dyn Operator, 
+               operator_extended: &dyn Operator) {
     let (hyperliquid_account, extended_account) = get_all_account_data(
-        fetcher_hyperliquid.as_ref(),
-        fetcher_extended.as_ref(),
+        fetcher_hyperliquid,
+        fetcher_extended,
         &config.wallet_address
     ).await;
 
@@ -46,8 +74,8 @@ async fn main() -> Result<()> {
     };
 
     let (hyperliquid_markets, extended_markets) = get_all_markets(
-        fetcher_hyperliquid.as_ref(),
-        fetcher_extended.as_ref()
+        fetcher_hyperliquid,
+        fetcher_extended
     ).await;
 
     let hyperliquid_positions: Vec<Position> = hyperliquid_account.as_ref().map_or(vec![], |a| a.positions.clone());
@@ -59,8 +87,8 @@ async fn main() -> Result<()> {
             &extended_positions,
             &hyperliquid_markets,
             &extended_markets,
-            operator_hyperliquid.as_ref(),
-            operator_extended.as_ref(),
+            operator_hyperliquid,
+            operator_extended,
         ).await;
     } else {
         info!("No open positions to close, must be first trade, continue.");
@@ -80,19 +108,20 @@ async fn main() -> Result<()> {
             *ext_rate,
             hyper_market,
             ext_market,
-            operator_hyperliquid.as_ref(),
-            operator_extended.as_ref(),
+            operator_hyperliquid,
+            operator_extended,
             min_available_balance.unwrap()
         );
 
-        set_same_leverage(
+        if let Err(e) = set_same_leverage(
             symbol.to_string(),
             hyper_market,
             ext_market,
-            operator_hyperliquid.as_ref(),
-            operator_extended.as_ref(),
-        )
-        .await?;
+            operator_hyperliquid,
+            operator_extended,
+        ).await {
+            error!("Failed to set leverage: {:?}", e);
+        }
 
         let (price_adjusted_long, _) = get_adjusted_price_and_side(long_market, &PositionSide::Long, false).await;
 
@@ -143,7 +172,6 @@ async fn main() -> Result<()> {
         error!("There are no arbitrage opportunities available at the moment.");
     }
 
-    Ok(())
 }
 
 async fn get_all_account_data(fetcher_hyperliquid: &dyn Fetcher, fetcher_extended: &dyn Fetcher, wallet_address: &str) -> (Option<AccountData>, Option<AccountData>) {

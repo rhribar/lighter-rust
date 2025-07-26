@@ -16,6 +16,11 @@ v_0-25-07-19:
 2. check if pos is open or not, from fetch
 3. if open close position and open position, otherwise just open (first time) -- need to test
 4. add cron job tokio
+- talk about tokio,
+- funding every hour
+- how long before does it make sense to do it
+- 5 minutes offset
+- how long to hold a position?
 5. when closing position save it in json
 
 3. ~~add exchange id and native order id~~
@@ -25,6 +30,25 @@ v_0-25-07-19:
 
 2. tidy up fetchers a lot
 trading k razbije na logical orders
+
+
+3. loop check if order filled, cancel and smaller order, more aggressive
+4. ci cd kako bom to prenesu na hetzner, novo verzijo, najbolj scp in cargo run
+5. clean up fetchers
+6. poglej clean up trade-a, post trade analysis, 
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ok i would now like us to really tidy up the main.rs file i would like to put the functionality in outside functins below main file with descriptive functions
