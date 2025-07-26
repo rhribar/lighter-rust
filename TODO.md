@@ -36,6 +36,10 @@ trading k razbije na logical orders
 4. ci cd kako bom to prenesu na hetzner, novo verzijo, najbolj scp in cargo run
 5. clean up fetchers
 6. poglej clean up trade-a, post trade analysis, 
+7. aja poglej na koliko časa boš dejansko menjal trade? ali boš dal da vsako uro pogleda in potrade-a, a si maker/taker? a boš dau da na 6 ur potrade-a,
+a boš dau da na vsako uro pogleda pa trade-a pa pogleda a se splača
+8. 50bips might be too far
+
 
 
 
