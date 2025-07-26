@@ -10,7 +10,3 @@ pub fn str_to_decimal(s: &str) -> PointsBotResult<Decimal> {
 pub fn current_timestamp() -> DateTime<Utc> {
     Utc::now()
 }
-
-pub fn format_decimal(d: &Decimal, precision: u32) -> String {
-    format!("{:.1$}", d, precision as usize)
-} 

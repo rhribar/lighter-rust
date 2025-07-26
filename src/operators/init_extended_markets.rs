@@ -107,6 +107,15 @@ pub enum Side {
     Sell,
 }
 
+impl Side {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Side::Buy => "BUY",
+            Side::Sell => "SELL",
+        }
+    }
+}
+
 /// Result returned by `sign_limit_ioc()`.
 #[derive(Debug)]
 pub struct Signature {

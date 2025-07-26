@@ -1,22 +1,14 @@
-/// Extended Exchange Fetcher
-/// 
-/// Fetches account and trading data from Extended exchange.
-/// Supports StarkEx-based trading with proper authentication.
-
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 use rust_decimal::Decimal;
-use log::{error, info};
-use chrono::{DateTime, Utc};
 
 use crate::{
-    str_to_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult
+    str_to_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide
 };
-use super::base::{HttpClient, Fetcher, AccountData, Position, MarketInfo, PositionSide};
+use super::base::{HttpClient, Fetcher, AccountData, Position, MarketInfo};
 
-/// Extended API response wrapper
 #[derive(Debug, Deserialize)]
 struct ExtendedResponse<T> {
     status: String,
@@ -29,7 +21,6 @@ struct ExtendedError {
     message: String,
 }
 
-/// Extended balance response
 #[derive(Debug, Deserialize)]
 struct ExtendedBalanceData {
     equity: String,

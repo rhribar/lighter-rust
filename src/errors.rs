@@ -34,6 +34,9 @@ pub enum PointsBotError {
     
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
     
     #[error("Unknown error: {0}")]
     Unknown(String),

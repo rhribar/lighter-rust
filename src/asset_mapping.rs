@@ -3,8 +3,6 @@ use crate::{ExchangeName};
 pub struct AssetMapping;
 
 impl AssetMapping {
-    // fetcher
-    // defined in our project, to our project naming conventions
     pub fn get_canonical_ticker(exchange: ExchangeName, symbol: &str) -> Option<String> {
         let stripped_symbol = match exchange {
             ExchangeName::Extended => symbol.strip_suffix("-USD").map(|s| s.to_string()),
@@ -28,12 +26,13 @@ impl AssetMapping {
                     "XBT" => "BTC".to_string(),
                     _ => s,
                 },
+                ExchangeName::Lighter => match s.as_str() {
+                    _ => s,
+                },
             },
         })
     }
 
-    // operator
-    // defined in their project, to their project naming conventions
     pub fn get_exchange_ticker(exchange: ExchangeName, src_asset: &str) -> Option<String> {
         let asset = match src_asset {
             _ => match exchange {
@@ -49,6 +48,9 @@ impl AssetMapping {
                 },
                 ExchangeName::Kraken => match src_asset {
                     "XBT" => "BTC",
+                    _ => src_asset,
+                },
+                ExchangeName::Lighter => match src_asset {
                     _ => src_asset,
                 },
             },

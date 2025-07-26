@@ -1,33 +1,34 @@
 use anyhow::Result;
 use log::{error, info};
 use rust_decimal::{prelude::FromPrimitive, Decimal};
-use std::str::FromStr;
 
 use points_bot_rs::{
-    fetchers::{hyperliquid, Fetcher, FetcherExtended, FetcherHyperliquid, MarketInfo, Position, PositionSide},
+    fetchers::{Fetcher, FetcherExtended, FetcherHyperliquid, MarketInfo, Position},
     operators::{create_operator_hyperliquid, Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType},
-    BotConfig, ExchangeName, PointsBotResult, Side,
+    BotConfig, PointsBotResult, PositionSide
 };
 
 async fn create_order(
     operator: &dyn Operator,
     symbol: &str,
-    side: Side,
-    quantity: &str,
-    price: &str,
+    side: PositionSide,
+    quantity: &Decimal,
+    price: &Decimal,
+    reduce_only: Option<bool>
 ) -> PointsBotResult<OrderResponse> {
     let order_request = OrderRequest {
         symbol: symbol.to_string(),
         side,
         order_type: OrderType::Limit,
-        quantity: Decimal::from_str(quantity)?,
-        price: Some(Decimal::from_str(price)?),
+        quantity: *quantity,
+        price: Some(*price),
         stop_price: None,
         time_in_force: Some("GTC".to_string()),
+        reduce_only,
     };
 
     info!("Creating order: {:?}", order_request);
-    info!("Using exchange: {}", operator.exchange_name().as_str());
+    info!("Using exchange: {}", operator.get_exchange_name().as_str());
 
     let result = operator.create_order(order_request).await?;
 
@@ -47,10 +48,8 @@ async fn main() -> Result<()> {
     });
 
     info!("Starting Points Bot - Creating single order");
-    info!("Trading mode: {}", if config.trading_mode { "LIVE" } else { "SIMULATION" });
+    info!("Trading mode: {}", if config.trading_mode == "live" { "LIVE" } else { "SIMULATION" });
     info!("Wallet address: {}", config.wallet_address);
-
-    let exchange = ExchangeName::Hyperliquid;
 
     let fetcher_hyperliquid = Box::new(FetcherHyperliquid::new());
     let fetcher_extended = Box::new(FetcherExtended::new());
@@ -71,11 +70,7 @@ async fn main() -> Result<()> {
         (Ok(hyperliquid_account), Ok(extended_account)) => {
             min_available_balance = Some(hyperliquid_account.available_balance.min(extended_account.available_balance));
             info!("Minimum Available Balance: ${:.2}", min_available_balance.unwrap());
-
-            // Log positions from Hyperliquid
             info!("Hyperliquid Positions: {:?}", hyperliquid_account.positions);
-
-            // Log positions from Extended
             info!("Extended Positions: {:?}", extended_account.positions);
 
             (Some(hyperliquid_account), Some(extended_account))
@@ -113,19 +108,17 @@ async fn main() -> Result<()> {
 
                 for position in &hyperliquid_positions {
                     if let Some(market) = hyperliquid_markets.iter().find(|m| m.symbol == position.symbol) {
-                        let bips_offset = Decimal::from_f64(0.001).unwrap(); // 10 bips = 0.1%
+                        let bips_offset = Decimal::from_f64(0.005).unwrap();
                         let (price_adjusted, side) = match position.side {
-                            PositionSide::Long => (market.ask_price * (Decimal::ONE + bips_offset), Side::Sell),
-                            PositionSide::Short => (market.bid_price * (Decimal::ONE - bips_offset), Side::Buy),
+                            PositionSide::Long => (market.ask_price * (Decimal::ONE + bips_offset), PositionSide::Short),
+                            PositionSide::Short => (market.bid_price * (Decimal::ONE - bips_offset), PositionSide::Long),
                         };
 
                         // Limit the number of decimals to match the original price
                         let original_decimals = market.ask_price.scale();
                         let price_adjusted = price_adjusted.round_dp(original_decimals);
 
-                        let quantity = position.size.abs().to_string();
-                        let price_adjusted_str = price_adjusted.to_string();
-                        match create_order(operator_hyperliquid.as_ref(), &position.symbol, side, &quantity, &price_adjusted_str).await {
+                        match create_order(operator_hyperliquid.as_ref(), &position.symbol, side, &position.size.abs(), &price_adjusted, Some(true)).await {
                             Ok(order_result) => {
                                 info!("Closed Hyperliquid position: {:?}", order_result);
                             }
@@ -140,17 +133,16 @@ async fn main() -> Result<()> {
 
                 for position in &extended_positions {
                     if let Some(market) = extended_markets.iter().find(|m| m.symbol == position.symbol) {
-                        let bips_offset = Decimal::from_str("0.005").unwrap(); // 10 bips = 0.1%
+                        let bips_offset = Decimal::from_f64(0.005).unwrap();
                         let (price_adjusted, side) = match position.side {
-                            PositionSide::Long => (market.ask_price * (Decimal::ONE + bips_offset), Side::Sell),
-                            PositionSide::Short => (market.bid_price * (Decimal::ONE - bips_offset), Side::Buy),
+                            PositionSide::Long => (market.ask_price * (Decimal::ONE + bips_offset), PositionSide::Short),
+                            PositionSide::Short => (market.bid_price * (Decimal::ONE - bips_offset), PositionSide::Long),
                         };
 
-                        let quantity = position.size.to_string();
                         let original_decimals = market.ask_price.scale();
                         let price_adjusted = price_adjusted.round_dp(original_decimals);
 
-                        match create_order(operator_extended.as_ref(), &position.symbol, side, &quantity, &price_adjusted.to_string()).await {
+                        match create_order(operator_extended.as_ref(), &position.symbol, side, &position.size, &price_adjusted, Some(true)).await {
                             Ok(order_result) => {
                                 info!("Closed Extended position: {:?}", order_result);
                             }
@@ -212,8 +204,8 @@ async fn main() -> Result<()> {
             extended_markets.iter().find(|m| m.symbol == *symbol),
         ) {
             // Calculate the amount based on ask prices and min_available_balance
-            let amount_hyper = Decimal::from_str(&min_balance.to_string()).unwrap() / hyper_market.ask_price;
-            let amount_ext = Decimal::from_str(&min_balance.to_string()).unwrap() / ext_market.ask_price;
+            let amount_hyper = min_balance / hyper_market.ask_price;
+            let amount_ext = min_balance / ext_market.ask_price;
             let min_order_size = hyper_market.min_order_size.unwrap_or(Decimal::ZERO).max(ext_market.min_order_size.unwrap_or(Decimal::ZERO));
             if min_order_size.is_zero() {
                 info!("No minimum order size specified for either market. Proceeding with the order.");
@@ -223,25 +215,35 @@ async fn main() -> Result<()> {
             // Take the minimum leverage
             let min_leverage = hyper_market.leverage.min(ext_market.leverage);
 
-            let amount_str = amount.to_string();
-
-            let (long_operator, short_operator, short_side, long_side): (Box<dyn Operator>, Box<dyn Operator>, Side, Side) = if hyper_rate > ext_rate {
-                (operator_extended, operator_hyperliquid, Side::Sell, Side::Buy)
+            if hyper_market.leverage > min_leverage {
+                operator_hyperliquid.change_leverage(symbol.clone(), min_leverage).await.map_err(|e| {
+                    error!("Failed to update leverage for Hyperliquid market {}: {:?}", symbol, e);
+                    e
+                })?;
             } else {
-                (operator_hyperliquid, operator_extended, Side::Sell, Side::Buy)
+                operator_extended.change_leverage(symbol.clone(), min_leverage).await.map_err(|e| {
+                    error!("Failed to update leverage for Extended market {}: {:?}", symbol, e);
+                    e
+                })?;
+            }
+
+            let (long_operator, short_operator, short_side, long_side): (Box<dyn Operator>, Box<dyn Operator>, PositionSide, PositionSide) = if hyper_rate > ext_rate {
+                (operator_extended, operator_hyperliquid, PositionSide::Short, PositionSide::Long)
+            } else {
+                (operator_hyperliquid, operator_extended, PositionSide::Short, PositionSide::Long)
             };
 
             print!("[INFO] Placing orders for symbol: {}", symbol);
-            info!("Short Operator: {}, Long Operator: {}", short_operator.exchange_name().as_str(), long_operator.exchange_name().as_str());
-            info!("Amount: {}, Min Leverage: {}", amount_str, min_leverage);
+            info!("Short Operator: {}, Long Operator: {}", short_operator.get_exchange_name().as_str(), long_operator.get_exchange_name().as_str());
+            info!("Amount: {}, Min Leverage: {}", amount, min_leverage);
 
-            match create_order(short_operator.as_ref(), symbol, short_side, &amount_str, &hyper_market.ask_price.to_string()).await {
+            /* match create_order(short_operator.as_ref(), symbol, short_side, &amount, &hyper_market.ask_price, Some(false)).await {
                 Ok(order_result) => {
                     info!("Order executed successfully!");
                     info!("Order ID: {}", order_result.order_id);
                     info!("Symbol: {}", order_result.symbol);
                     info!("Side: {:?}", order_result.side);
-                    info!("Status: {}", order_result.status);
+                    info!("Status: {}", order_result.status.as_str());
                     info!("Filled Quantity: {}", order_result.filled_quantity);
                     info!("Remaining Quantity: {}", order_result.remaining_quantity);
 
@@ -252,15 +254,18 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     error!("Failed to place short order: {:?}", e);
                 }
-            }
+            } 
 
-            match create_order(long_operator.as_ref(), symbol, long_side, &amount_str, &ext_market.ask_price.to_string()).await {
+            let bips_offset = Decimal::from_f64(0.010).unwrap();
+            let price_adjusted = (ext_market.ask_price * (Decimal::ONE + bips_offset)).round_dp(4);
+
+            match create_order(long_operator.as_ref(), symbol, long_side, &amount, &price_adjusted, Some(false)).await {
                 Ok(order_result) => {
                     info!("Long order placed: {:?}", order_result);
                             info!("Order ID: {}", order_result.order_id);
                     info!("Symbol: {}", order_result.symbol);
                     info!("Side: {:?}", order_result.side);
-                    info!("Status: {}", order_result.status);
+                    info!("Status: {}", order_result.status.as_str());
                     info!("Filled Quantity: {}", order_result.filled_quantity);
                     info!("Remaining Quantity: {}", order_result.remaining_quantity);
 
@@ -271,7 +276,7 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     error!("Failed to place long order: {:?}", e);
                 }
-            }
+            }*/
         } else {
             error!("Failed to find matching markets for symbol: {}", symbol);
         }

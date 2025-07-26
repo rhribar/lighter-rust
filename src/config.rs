@@ -4,7 +4,7 @@ use crate::PointsBotResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotConfig {
-    pub trading_mode: bool,
+    pub trading_mode: String,
     pub wallet_address: String,
     pub hyperliquid_private_key: Option<String>,
     pub extended_api_key: Option<String>,
@@ -18,9 +18,7 @@ impl BotConfig {
         dotenv::dotenv().ok();
         
         let trading_mode = env::var("TRADING_ENV")
-            .unwrap_or_else(|_| "testing".to_string())
-            .parse()
-            .unwrap_or(false);
+            .unwrap_or_else(|_| "testing".to_string());
         
         let wallet_address = env::var("WALLET_ADDRESS")
             .unwrap_or_else(|_| panic!("WALLET_ADDRESS is not set"));

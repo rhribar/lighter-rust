@@ -1,12 +1,4 @@
-use std::fmt::Display;
-
-/// Shared types used across the Points Bot
-/// 
-/// This module contains core types that are used by both fetchers and operators.
-
 use serde::{Deserialize, Serialize};
-
-// ===== SHARED ENUMS =====
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExchangeName {
@@ -16,6 +8,8 @@ pub enum ExchangeName {
     Extended,
     #[serde(rename = "kraken")]
     Kraken,
+    #[serde(rename = "lighter")]
+    Lighter,
 }
 
 impl ExchangeName {
@@ -24,23 +18,24 @@ impl ExchangeName {
             ExchangeName::Hyperliquid => "hyperliquid",
             ExchangeName::Extended => "extended",
             ExchangeName::Kraken => "kraken",
+            ExchangeName::Lighter => "lighter",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Side {
-    #[serde(rename = "buy")]
-    Buy,
-    #[serde(rename = "sell")]
-    Sell,
+pub enum PositionSide {
+    #[serde(rename = "long")]
+    Long,
+    #[serde(rename = "short")]
+    Short,
 }
 
-impl Side {
+impl PositionSide {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Side::Buy => "buy",
-            Side::Sell => "sell",
+            PositionSide::Long => "long",
+            PositionSide::Short => "short",
         }
     }
 } 

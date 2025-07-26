@@ -1,20 +1,15 @@
-/// Hyperliquid Exchange Fetcher
-/// 
-/// Fetches account and trading data from Hyperliquid exchange.
-
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 use rust_decimal::Decimal;
-use rust_decimal::prelude::*;
 
 use crate::AssetMapping;
+use crate::PositionSide;
 use crate::{
     ExchangeName, PointsBotResult, PointsBotError, str_to_decimal, current_timestamp
 };
-use super::base::{HttpClient, Fetcher, AccountData, Position, PositionSide, MarketInfo};
+use super::base::{HttpClient, Fetcher, AccountData, Position, MarketInfo};
 
-/// Hyperliquid API response structures
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HyperliquidAccountData {

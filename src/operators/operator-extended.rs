@@ -3,9 +3,10 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use rust_decimal::Decimal;
-use crate::operators::{validate_order, Operator, OrderRequest, OrderResponse, ClosePositionResponse};
-use crate::{current_timestamp, AssetMapping, ExchangeName, PointsBotError, PointsBotResult};
+use crate::operators::{Operator, OrderRequest, OrderResponse};
+use crate::{current_timestamp, AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult};
 use crate::operators::init_extended_markets::{init_extended_markets, extended_markets, sign_limit_ioc, Side, hex_to_felt};
+
 pub struct OperatorExtended {
     client: crate::operators::base::HttpClient,
     api_key: Option<String>,
@@ -35,13 +36,15 @@ impl OperatorExtended {
     }
 }
 
-
 #[async_trait]
 impl Operator for OperatorExtended {
+    fn get_exchange_name(&self) -> ExchangeName {
+        ExchangeName::Extended
+    }
+
     async fn create_order(&self, mut order: OrderRequest) -> PointsBotResult<OrderResponse> {
         use serde_json::json;
         use chrono::{Utc, Duration};
-        validate_order(&order)?;
         if !self.is_configured() {
             return Err(PointsBotError::Auth("Operator requires API key, STARK private key, and vault ID".to_string()));
         }
@@ -53,8 +56,8 @@ impl Operator for OperatorExtended {
             .ok_or_else(|| PointsBotError::InvalidParameter(format!("Market {} not found", order.symbol)))?;
 
         let side = match order.side.as_str().to_uppercase().as_str() {
-            "BUY" => Side::Buy,
-            "SELL" => Side::Sell,
+            "LONG" => Side::Buy,
+            "SHORT" => Side::Sell,
             _ => return Err(PointsBotError::InvalidParameter("Invalid side".to_string())),
         };
         let qty_synthetic = order.quantity;
@@ -75,16 +78,15 @@ impl Operator for OperatorExtended {
             stark_priv,
             Some(sig_expiry_ts_ms.timestamp_millis()),
             None,
-            false,
-        ).map_err(|e| PointsBotError::Unknown(format!("Signing error: {}", e)))?;
+            order.reduce_only.unwrap_or(false),
+        ).map_err(|e| PointsBotError::Unknown(format!("Signing error: {e}")))?;
         let api_key = self.api_key.as_ref().ok_or_else(|| PointsBotError::Auth("EXTENDED_API_KEY not set".to_string()))?;
-        // For now, get public key from env (could be added to struct if needed)
         let stark_public_key = std::env::var("EXTENDED_STARK_PUBLIC_KEY").map_err(|_| PointsBotError::Auth("EXTENDED_STARK_PUBLIC_KEY not found in environment".to_string()))?;
         let order_payload = json!({
             "id": signature.order_hash.to_string(),
             "market": order.symbol,
-            "type": "LIMIT",
-            "side": order.side.as_str().to_uppercase(),
+            "type": order.order_type.as_str().to_uppercase(),
+            "side": side.as_str().to_uppercase(),
             "qty": qty_synthetic.to_string(),
             "price": limit_price.unwrap_or(Decimal::ZERO).to_string(),
             "timeInForce": "GTT",
@@ -99,7 +101,7 @@ impl Operator for OperatorExtended {
                 "starkKey": stark_public_key,
                 "collateralPosition": vault_id.to_string()
             },
-            "reduceOnly": false,
+            "reduceOnly": order.reduce_only.unwrap_or(false),
             "postOnly": false,
             "debuggingAmounts": {
                 "collateralAmount": "10000000",
@@ -112,31 +114,62 @@ impl Operator for OperatorExtended {
         headers.insert("X-Api-Key".to_string(), api_key.clone());
         headers.insert("User-Agent".to_string(), "points-bot-rs/1.0".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        let response = self.client.post(url, &order_payload.to_string(), Some(headers)).await.map_err(|e| PointsBotError::Unknown(format!("HTTP error: {}", e)))?;
-        let status = response.status();
-        let text = response.text().await.map_err(|e| PointsBotError::Unknown(format!("Response error: {}", e)))?;
-        let order_id = if let Ok(json_response) = serde_json::from_str::<serde_json::Value>(&text) {
-            json_response.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string()
-        } else {
-            "".to_string()
+        print!("[DEBUG] Sending order request to {}: {:?} {:?}", url, order_payload, headers);
+        let response = self.client.post(url, &order_payload.to_string(), Some(headers)).await.map_err(|e| PointsBotError::Unknown(format!("HTTP error: {e}")))?;
+
+        let response_text = response.text().await.map_err(|e| PointsBotError::Unknown(format!("Response error: {e}")))?;
+        println!("[DEBUG] Raw response body: {}", response_text);
+
+        let json_response: serde_json::Value = serde_json::from_str(&response_text)
+            .map_err(|e| PointsBotError::Parse(format!("Failed to parse JSON: {e}")))?;
+
+        if let Some(order_data) = json_response.as_object() {
+            if let Some(status) = order_data.get("status") {
+                if status == "OK" {
+                    return Ok(OrderResponse {
+                        order_id: order_data.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                        symbol: order.symbol.clone(),
+                        side: order.side.clone(),
+                        status: OrderStatus::Resting,
+                        filled_quantity: Decimal::ZERO,
+                        remaining_quantity: order.quantity,
+                        average_price: None,
+                        timestamp: current_timestamp(),
+                    });
+                }
+            }
+        }
+
+        println!("[ERROR] Failed to create order: {}", response_text);
+        Err(PointsBotError::Exchange { code: "500".to_string(), message: "Failed to create order".to_string() })
+    }
+
+    async fn change_leverage(&self, symbol: String, leverage: Decimal) -> PointsBotResult<()> {
+        let api_key = self.api_key.as_ref().ok_or_else(|| PointsBotError::Auth("EXTENDED_API_KEY not set".to_string()))?;
+        let payload = ChangeLeverageRequest {
+            market: AssetMapping::get_exchange_ticker(ExchangeName::Extended, &symbol).unwrap_or_else(|| symbol.clone()),
+            leverage: leverage.to_string(),
         };
-        Ok(OrderResponse {
-            order_id,
-            symbol: order.symbol.clone(),
-            side: order.side.clone(),
-            status: "SUBMITTED".to_string(),
-            filled_quantity: Decimal::ZERO,
-            remaining_quantity: order.quantity,
-            average_price: None,
-            timestamp: current_timestamp(),
-        })
-    }
 
-    async fn close_position(&self, _symbol: &str) -> PointsBotResult<ClosePositionResponse> {
-        Err(PointsBotError::Unknown("close_position not implemented".to_string()))
-    }
+        let response = self.client.patch(
+            "/user/leverage",
+            &serde_json::to_string(&payload).map_err(|e| PointsBotError::Parse(format!("Failed to serialize payload: {e}")))?,
+            Some(std::collections::HashMap::from([
+                ("X-Api-Key".to_string(), api_key.clone()),
+                ("User-Agent".to_string(), "points-bot-rs/1.0".to_string()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ])),
+        ).await.map_err(|e| PointsBotError::Unknown(format!("HTTP error: {e}")))?;
 
-    fn exchange_name(&self) -> ExchangeName {
-        ExchangeName::Extended
+        let response_text = response.text().await.map_err(|e| PointsBotError::Unknown(format!("Response error: {e}")))?;
+
+        let json_response: serde_json::Value = serde_json::from_str(&response_text)
+            .map_err(|e| PointsBotError::Parse(format!("Failed to parse JSON: {e}")))?;
+
+        if json_response["status"] == "OK" {
+            Ok(())
+        } else {
+            Err(PointsBotError::Exchange { code: "500".to_string(), message: "Failed to update leverage".to_string() })
+        }
     }
 }

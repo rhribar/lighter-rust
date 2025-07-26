@@ -1,13 +1,14 @@
 pub use config::BotConfig;
-pub use types::*;
-pub use errors::*;
+pub mod utils;
 pub use utils::*;
 pub mod config;
 pub mod errors;
+pub use errors::*;
 pub mod http_client;
 pub mod fetchers;
 pub mod operators;
+pub use operators::*;
 pub mod types;
-pub mod utils;
+pub use types::*;
 pub mod asset_mapping;
 pub use asset_mapping::*;

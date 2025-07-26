@@ -80,6 +80,35 @@ impl HttpClient {
         }
     }
     
+    pub async fn patch(&self, endpoint: &str, body: &str, headers: Option<HashMap<String, String>>) -> PointsBotResult<Response> {
+        self.rate_limit().await;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+        let mut request = self.client.patch(&url);
+
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(&key, &value);
+            }
+        } else {
+            request = request.header("Content-Type", "application/json");
+        }
+
+        let response = request
+            .body(body.to_string())
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response)
+        } else {
+            Err(PointsBotError::Exchange {
+                code: response.status().as_str().to_string(),
+                message: format!("PATCH request failed: {}", response.status()),
+            })
+        }
+    }
+    
     pub async fn parse_json<T: DeserializeOwned>(&self, response: Response) -> PointsBotResult<T> {
         let text = response.text().await?;
         serde_json::from_str(&text).map_err(|e| {
@@ -113,4 +142,4 @@ impl HttpClient {
             *last_request = Some(Instant::now());
         }
     }
-} 
+}

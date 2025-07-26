@@ -7,12 +7,12 @@ v_0-25-07-16
 
 
 v_0-25-07-19:
-1. tidy everything up use Decimals in fetchers
+1. ~~tidy everything up use Decimals in fetchers~~
     2. deprecate the extended market
-    3. dont return a fake order if it didnt go through
+    3. ~~dont return a (positive response) order if it didnt go through~~
     4. tidy up
-    5. add leverage change
-    6. think about lev
+    5. ~~add leverage change~~
+    6. ~~think about lev~~
 2. check if pos is open or not, from fetch
 3. if open close position and open position, otherwise just open (first time)
 4. add cron job tokio
@@ -20,3 +20,10 @@ v_0-25-07-19:
 
 
 1. Worsen price so hft takers dont arb it
+
+
+2. tidy up fetchers a lot
+
+trading k razbije na logical orders
+
+add exchange id and native order id
