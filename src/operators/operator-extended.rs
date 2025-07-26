@@ -118,7 +118,7 @@ impl Operator for OperatorExtended {
         let response = self.client.post(url, &order_payload.to_string(), Some(headers)).await.map_err(|e| PointsBotError::Unknown(format!("HTTP error: {e}")))?;
 
         let response_text = response.text().await.map_err(|e| PointsBotError::Unknown(format!("Response error: {e}")))?;
-        println!("[DEBUG] Raw response body: {}", response_text);
+        // println!("[DEBUG] Raw response body: {}", response_text);
 
         let json_response: serde_json::Value = serde_json::from_str(&response_text)
             .map_err(|e| PointsBotError::Parse(format!("Failed to parse JSON: {e}")))?;

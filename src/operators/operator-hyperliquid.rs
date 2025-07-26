@@ -54,7 +54,7 @@ impl Operator for OperatorHyperliquid {
         let sdk_result = self.client.bulk_order(vec![sdk_order], Some(&self.client.wallet)).await;
         match sdk_result {
             Ok(response) => {
-                println!("[DEBUG] SDK bulk_order response: {:?}", response);
+                // println!("[DEBUG] SDK bulk_order response: {:?}", response);
                 match response {
                     ExchangeResponseStatus::Ok(exchange_response) => {
                         if let Some(data_statuses) = exchange_response.data {
