@@ -127,7 +127,8 @@ impl Operator for OperatorExtended {
             if let Some(status) = order_data.get("status") {
                 if status == "OK" {
                     return Ok(OrderResponse {
-                        order_id: order_data.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                        id: order.id,
+                        exchange_id: order_data.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
                         symbol: order.symbol.clone(),
                         side: order.side.clone(),
                         status: OrderStatus::Resting,

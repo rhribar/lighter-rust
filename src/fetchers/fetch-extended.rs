@@ -90,7 +90,7 @@ impl FetcherExtended {
     pub fn new() -> Self {
         let client = HttpClient::new(
             "https://api.extended.exchange/api/v1".to_string(),
-            Some(1000), // Rate limit: 1000 requests per minute (matching Python)
+            Some(1000),
         );
         
         let api_key = std::env::var("EXTENDED_API_KEY").ok();

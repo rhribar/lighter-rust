@@ -41,6 +41,7 @@ impl OrderType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderRequest {
+    pub id: String,
     pub symbol: String,
     pub side: PositionSide,
     pub order_type: OrderType,
@@ -74,7 +75,8 @@ impl OrderStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderResponse {
-    pub order_id: String,
+    pub id: String,
+    pub exchange_id: String,
     pub symbol: String,
     pub side: PositionSide,
     pub status: OrderStatus,

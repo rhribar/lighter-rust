@@ -204,7 +204,7 @@ impl Fetcher for FetcherHyperliquid {
                     quote_asset: "USD".to_string(),
                     bid_price,
                     ask_price,
-                    leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)), // Use maxLeverage if available, default to 5
+                    leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)),
                     funding_rate,
                     min_order_size: None,
                 });

@@ -62,7 +62,8 @@ impl Operator for OperatorHyperliquid {
                                 match status {
                                     ExchangeDataStatus::Resting(resting_order) => {
                                         return Ok(OrderResponse {
-                                            order_id: resting_order.oid.to_string(),
+                                            id: order.id,
+                                            exchange_id: resting_order.oid.to_string(),
                                             symbol: order.symbol.clone(),
                                             side: order.side,
                                             status: OrderStatus::Resting,

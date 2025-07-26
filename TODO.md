@@ -18,12 +18,11 @@ v_0-25-07-19:
 4. add cron job tokio
 5. when closing position save it in json
 
+3. ~~add exchange id and native order id~~
 
 1. Worsen price so hft takers dont arb it
 
 
 2. tidy up fetchers a lot
-
 trading k razbije na logical orders
 
-add exchange id and native order id

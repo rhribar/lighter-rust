@@ -8,35 +8,6 @@ use points_bot_rs::{
     BotConfig, PointsBotResult, PositionSide
 };
 
-async fn create_order(
-    operator: &dyn Operator,
-    symbol: &str,
-    side: PositionSide,
-    quantity: &Decimal,
-    price: &Decimal,
-    reduce_only: Option<bool>
-) -> PointsBotResult<OrderResponse> {
-    let order_request = OrderRequest {
-        symbol: symbol.to_string(),
-        side,
-        order_type: OrderType::Limit,
-        quantity: *quantity,
-        price: Some(*price),
-        stop_price: None,
-        time_in_force: Some("GTC".to_string()),
-        reduce_only,
-    };
-
-    info!("Creating order: {:?}", order_request);
-    info!("Using exchange: {}", operator.get_exchange_name().as_str());
-
-    let result = operator.create_order(order_request).await?;
-
-    info!("Order created successfully: {:?}", result);
-
-    Ok(result)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     use ethers::signers::LocalWallet;
@@ -283,4 +254,34 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn create_order(
+    operator: &dyn Operator,
+    symbol: &str,
+    side: PositionSide,
+    quantity: &Decimal,
+    price: &Decimal,
+    reduce_only: Option<bool>
+) -> PointsBotResult<OrderResponse> {
+    let order_request = OrderRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        symbol: symbol.to_string(),
+        side,
+        order_type: OrderType::Limit,
+        quantity: *quantity,
+        price: Some(*price),
+        stop_price: None,
+        time_in_force: Some("GTC".to_string()),
+        reduce_only,
+    };
+
+    info!("Creating order: {:?}", order_request);
+    info!("Using exchange: {}", operator.get_exchange_name().as_str());
+
+    let result = operator.create_order(order_request).await?;
+
+    info!("Order created successfully: {:?}", result);
+
+    Ok(result)
 }
