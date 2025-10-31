@@ -1,0 +1,118 @@
+
+SIMPLE ORDER
+/* let usd_amount = Decimal::from_f64(100.0).unwrap();
+    let btc_price = Decimal::from_str("108000").unwrap();
+    let qty = (usd_amount / btc_price).round_dp(4); // adjust precision if needed
+    let symbol = "BTC"; // change to your exact market symbol if different
+
+    match create_order(operator_extended, symbol, PositionSide::Short, &qty, &btc_price, Some(false)).await {
+        Ok(order_result) => {
+            info!("Short order placed: {:?}", order_result);
+            info!("Order ID: {}", order_result.id);
+            info!("Symbol: {}", order_result.symbol);
+            info!("Side: {:?}", order_result.side);
+            info!("Status: {}", order_result.status.as_str());
+            info!("Filled Quantity: {}", order_result.filled_quantity);
+            info!("Remaining Quantity: {}", order_result.remaining_quantity);
+
+            if let Some(avg_price) = order_result.average_price {
+                info!("Average Price: {}", avg_price);
+            }
+        }
+        Err(e) => {
+            error!("Failed to place long order: {:?}", e);
+        }
+    }
+ */
+
+
+
+     /* if let (Some(hyper_account), Some(ext_account)) = (&hyperliquid_account, &extended_account) {
+        save_pnl(Decimal::from_f64(116.59 + 80.57).unwrap(), hyper_account, ext_account);
+    } */
+
+
+    /* fn save_to_json<T: serde::Serialize>(file_path: &str, data: &T) {
+    if let Ok(mut file) = OpenOptions::new().create(true).write(true).append(true).open(file_path) {
+        if let Ok(json_string) = serde_json::to_string(data) {
+            println!("Writing to file: {}", json_string);
+            writeln!(file, "{}", json_string).unwrap_or_else(|e| error!("Failed to write to JSON file: {:?}", e));
+        }
+    } else {
+        error!("Failed to open JSON file.");
+    }
+} */
+
+/* fn save_individual_position_pnl(positions: &[Position]) {
+    for position in positions {
+        let position_summary = json!({
+            "Timestamp": Utc::now().to_rfc3339(),
+            "Symbol": position.symbol,
+            "Unrealized PnL": position.unrealized_pnl,
+            "Funding Fees": position.cum_funding.unwrap_or(Decimal::ZERO),
+        });
+        println!("Position Summary: {}", position_summary);
+        save_to_json("position_pnl.json", &position_summary);
+    }
+} */
+
+/* fn save_pnl(start_balance: Decimal, hyper_account: &AccountData, ext_account: &AccountData) {
+    let mut total_unrealized_pnl = Decimal::ZERO;
+    let mut total_funding_fees = Decimal::ZERO;
+
+    let (total_unrealized_pnl, total_funding_fees) = hyper_account.positions.iter().chain(&ext_account.positions).map(|position| {
+        total_unrealized_pnl += position.unrealized_pnl;
+        total_funding_fees += position.cum_funding.unwrap_or(Decimal::ZERO);
+
+        (total_unrealized_pnl, total_funding_fees)
+    }).last().unwrap_or((Decimal::ZERO, Decimal::ZERO));
+
+    save_portfolio_pnl(start_balance, hyper_account.account_value + ext_account.account_value);
+    save_position_pnl(start_balance, total_unrealized_pnl, total_funding_fees);
+
+    // Save individual position PnL
+    save_individual_position_pnl(&hyper_account.positions);
+    save_individual_position_pnl(&ext_account.positions);
+} */
+
+/* fn save_portfolio_pnl(start_balance: Decimal, current_balance: Decimal) {
+    let summary: serde_json::Value = json!({
+        "Timestamp": Utc::now().to_rfc3339(),
+        "Start": start_balance,
+        "Current": current_balance,
+        "Pnl": current_balance - start_balance,
+        "Pnl in %": (current_balance - start_balance) / start_balance * Decimal::from(100),
+    });
+    println!("Portfolio Summary: {}", summary);
+    save_to_json("portfolio_summary.json", &summary);
+} */
+
+/* fn save_position_pnl(start_balance: Decimal, positions_pnl: Decimal, funding_payments: Decimal) {
+    let current_balance = positions_pnl + funding_payments;
+    let summary = json!({
+        "Timestamp": Utc::now().to_rfc3339(),
+        "Start": start_balance,
+        "Current": current_balance,
+        "Pnl": current_balance - start_balance,
+        "Pnl in %": (current_balance - start_balance) / start_balance * Decimal::from(100),
+    });
+    println!("Test Summary: {}", summary);
+    save_to_json("test_summary.json", &summary);
+} */
+
+
+
+export TRADING_ENV=live; export RUST_LOG=info; export IS_SCHEDULE = truecargo run
+set TRADING_ENV=live; set RUST_LOG=info; cargo run
+
+cargo build (--release)
+
+scp -i "C:\Users\Rok Hribar\.ssh\hetzner" target/release/points-bot .env root@167.235.53.59:/root/compounded_bot_new
+
+ssh -i "~/.ssh/hetzner" root@167.235.53.59
+
+cd /root/compounded_bot_new
+
+./points-bot
+
+nohup ./points-bot > output.log 2>&1 &
