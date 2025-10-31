@@ -1,12 +1,11 @@
 pub mod base;
-#[path = "operator-hyperliquid.rs"]
-pub mod hyperliquid;
-
-#[path = "operator-extended.rs"]
-pub mod extended;
-pub mod init_extended_markets;
-
 pub use base::*;
-pub use hyperliquid::*;
-pub use extended::*;
-pub use init_extended_markets::*;
+
+pub mod operator_hyperliquid;
+pub use operator_hyperliquid::*;
+
+pub mod operator_extended;
+pub use operator_extended::*;
+
+pub mod utils;
+pub use utils::*;

@@ -1,8 +1,8 @@
+pub use crate::http_client::HttpClient;
+use crate::{ExchangeName, PointsBotResult, PositionSide};
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use crate::{ExchangeName, PointsBotResult, PositionSide};
-pub use crate::http_client::HttpClient;
 
 #[async_trait]
 pub trait Fetcher: Send + Sync {
@@ -33,6 +33,7 @@ pub struct Position {
     pub unrealized_pnl: Decimal,
     pub margin_used: Decimal,
     pub liquidation_price: Option<Decimal>,
+    pub cum_funding: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

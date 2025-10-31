@@ -1,20 +1,19 @@
+use crate::{ExchangeName, PointsBotResult, PositionSide};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use crate::{ExchangeName, PointsBotResult, PositionSide};
 
 pub use crate::http_client::HttpClient;
 
 #[async_trait]
 pub trait Operator: Send + Sync {
+    fn get_exchange_info(&self) -> ExchangeName;
+
     async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse>;
 
     async fn change_leverage(&self, symbol: String, leverage: Decimal) -> PointsBotResult<()>;
-
-    fn get_exchange_name(&self) -> ExchangeName;
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OrderType {
@@ -71,7 +70,7 @@ impl OrderStatus {
             OrderStatus::Unknown => "unknown",
         }
     }
-} 
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderResponse {
