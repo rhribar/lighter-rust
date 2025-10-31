@@ -116,3 +116,8 @@ TODO:
 3. prettify the infra, base.rs operators, fetchers asse
 4. make lighter fetcher/operator
 5. 
+
+
+
+
+DOUBLE CHECK FUNDING TIMEFRAMES

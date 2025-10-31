@@ -1,13 +1,10 @@
 use std::str::FromStr;
 
 use crate::{
-    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError,
-    PointsBotResult, PositionSide, TickerDirection,
+    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
     operators::{
         Operator, OrderRequest, OrderResponse,
-        init_extended_markets::{
-            Side, extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc,
-        },
+        init_extended_markets::{Side, extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc},
     },
 };
 use async_trait::async_trait;
@@ -25,17 +22,12 @@ pub struct OperatorExtended {
 impl OperatorExtended {
     pub async fn new() -> Self {
         let _ = init_extended_markets().await;
-        let client = crate::operators::base::HttpClient::new(
-            "https://api.starknet.extended.exchange/api/v1".to_string(),
-            Some(1000),
-        );
+        let client = crate::operators::base::HttpClient::new("https://api.starknet.extended.exchange/api/v1".to_string(), Some(1000));
         Self {
             client,
             api_key: std::env::var("EXTENDED_API_KEY").ok(),
             stark_private_key: std::env::var("EXTENDED_STARK_PRIVATE_KEY").ok(),
-            vault_id: std::env::var("EXTENDED_VAULT_KEY")
-                .ok()
-                .and_then(|v| v.parse().ok()),
+            vault_id: std::env::var("EXTENDED_VAULT_KEY").ok().and_then(|v| v.parse().ok()),
         }
     }
 
@@ -58,16 +50,11 @@ impl Operator for OperatorExtended {
             });
         }
         let _ = init_extended_markets();
-        order.symbol = AssetMapping::map_ticker(
-            ExchangeName::Extended,
-            &order.symbol,
-            TickerDirection::ToExchange,
-        ).unwrap_or_else(|| order.symbol.clone());
-        let market_config = extended_markets()
-            .get(&order.symbol)
-            .ok_or_else(|| PointsBotError::InvalidParameter {
-                msg: format!("Market {} not found", order.symbol),
-            })?;
+        order.symbol =
+            AssetMapping::map_ticker(ExchangeName::Extended, &order.symbol, TickerDirection::ToExchange).unwrap_or_else(|| order.symbol.clone());
+        let market_config = extended_markets().get(&order.symbol).ok_or_else(|| PointsBotError::InvalidParameter {
+            msg: format!("Market {} not found", order.symbol),
+        })?;
 
         let side = match order.side {
             PositionSide::Long => Side::Buy,
@@ -97,8 +84,12 @@ impl Operator for OperatorExtended {
             Some((correct_expiry_hours_plus_14_days * 3600.0).round() as i64),
             None,
             order.reduce_only.unwrap_or(false),
-            None, None, None, None,
-        ).map_err(|e| PointsBotError::Unknown {
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(|e| PointsBotError::Unknown {
             msg: format!("Signing error: {e}"),
             source: Some(e.into()),
         })?;
@@ -113,7 +104,7 @@ impl Operator for OperatorExtended {
         })?;
 
         let order_payload = json!({
-            "id": signature.order_hash.to_string(),
+            "id": order.id.to_string(),
             "market": order.symbol,
             "type": order.order_type.as_str().to_uppercase(),
             "side": side.as_str().to_uppercase(),
@@ -147,11 +138,10 @@ impl Operator for OperatorExtended {
                     msg: format!("Response error: {e}"),
                     source: Some(Box::new(e)),
                 })?;
-                let json_response: serde_json::Value = serde_json::from_str(&response_text)
-                    .map_err(|e| PointsBotError::Parse {
-                        msg: format!("Failed to parse JSON: {e}"),
-                        source: Some(Box::new(e)),
-                    })?;
+                let json_response: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| PointsBotError::Parse {
+                    msg: format!("Failed to parse JSON: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
                 if json_response["status"] == "OK" {
                     return Ok(OrderResponse {
                         id: order.id,
@@ -180,13 +170,10 @@ impl Operator for OperatorExtended {
             source: None,
         })?;
         let body = serde_json::to_string(&ChangeLeverageRequest {
-            market: AssetMapping::map_ticker(
-                ExchangeName::Extended,
-                &symbol,
-                TickerDirection::ToExchange,
-            ).unwrap_or(symbol),
+            market: AssetMapping::map_ticker(ExchangeName::Extended, &symbol, TickerDirection::ToExchange).unwrap_or(symbol),
             leverage: leverage.to_string(),
-        }).map_err(|e| PointsBotError::Parse {
+        })
+        .map_err(|e| PointsBotError::Parse {
             msg: format!("Failed to serialize payload: {e}"),
             source: Some(Box::new(e)),
         })?;
@@ -194,24 +181,32 @@ impl Operator for OperatorExtended {
             ("X-Api-Key".to_string(), api_key.clone()),
             ("User-Agent".to_string(), "bot-rs/1.0".to_string()),
             ("Content-Type".to_string(), "application/json".to_string()),
-        ].iter().cloned().collect();
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
-        let response_text = self.client.patch("/user/leverage", &body, Some(headers)).await
+        let response_text = self
+            .client
+            .patch("/user/leverage", &body, Some(headers))
+            .await
             .map_err(|e| PointsBotError::Unknown {
                 msg: format!("HTTP error: {e}"),
                 source: Some(Box::new(e)),
             })?
-            .text().await.map_err(|e| PointsBotError::Unknown {
+            .text()
+            .await
+            .map_err(|e| PointsBotError::Unknown {
                 msg: format!("Response error: {e}"),
                 source: Some(Box::new(e)),
             })?;
 
-        match serde_json::from_str::<serde_json::Value>(&response_text)
-            .map_err(|e| PointsBotError::Parse {
-                msg: format!("Failed to parse JSON: {e}"),
-                source: Some(Box::new(e)),
-            })?
-            ["status"].as_str() {
+        match serde_json::from_str::<serde_json::Value>(&response_text).map_err(|e| PointsBotError::Parse {
+            msg: format!("Failed to parse JSON: {e}"),
+            source: Some(Box::new(e)),
+        })?["status"]
+            .as_str()
+        {
             Some("OK") => Ok(()),
             _ => Err(PointsBotError::Exchange {
                 code: "500".to_string(),

@@ -1,14 +1,8 @@
 use super::base::{Operator, OrderRequest, OrderResponse};
-use crate::{
-    ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
-    asset_mapping::AssetMapping,
-};
+use crate::{ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection, asset_mapping::AssetMapping};
 use async_trait::async_trait;
 use ethers::signers::LocalWallet;
-use hyperliquid_rust_sdk::{
-    ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus,
-    ExchangeResponseStatus,
-};
+use hyperliquid_rust_sdk::{ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus, ExchangeResponseStatus};
 use log::info;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use std::str::FromStr;
@@ -37,11 +31,8 @@ impl Operator for OperatorHyperliquid {
     }
 
     async fn create_order(&self, mut order: OrderRequest) -> PointsBotResult<OrderResponse> {
-        order.symbol = AssetMapping::map_ticker(
-            ExchangeName::Hyperliquid,
-            &order.symbol,
-            TickerDirection::ToExchange,
-        ).unwrap_or_else(|| order.symbol.clone());
+        order.symbol =
+            AssetMapping::map_ticker(ExchangeName::Hyperliquid, &order.symbol, TickerDirection::ToExchange).unwrap_or_else(|| order.symbol.clone());
 
         let sdk_order = ClientOrderRequest {
             asset: order.symbol.clone(),
@@ -56,10 +47,12 @@ impl Operator for OperatorHyperliquid {
         let sdk_result = self.client.bulk_order(vec![sdk_order], Some(&self.client.wallet)).await;
         let response = match sdk_result {
             Ok(resp) => resp,
-            Err(e) => return Err(PointsBotError::Exchange {
-                code: "500".to_string(),
-                message: format!("SDK bulk_order error: {e}"),
-            }),
+            Err(e) => {
+                return Err(PointsBotError::Exchange {
+                    code: "500".to_string(),
+                    message: format!("SDK bulk_order error: {e}"),
+                });
+            }
         };
 
         match response {
@@ -116,25 +109,21 @@ impl Operator for OperatorHyperliquid {
     }
 
     async fn change_leverage(&self, mut symbol: String, leverage: Decimal) -> PointsBotResult<()> {
-        symbol = AssetMapping::map_ticker(
-            ExchangeName::Hyperliquid,
-            &symbol,
-            TickerDirection::ToExchange,
-        ).unwrap_or_else(|| symbol.clone());
+        symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &symbol, TickerDirection::ToExchange).unwrap_or_else(|| symbol.clone());
 
-        let sdk_result = self.client.update_leverage(
-            leverage.to_u32().unwrap_or(0),
-            &symbol,
-            false,
-            Some(&self.client.wallet),
-        ).await;
+        let sdk_result = self
+            .client
+            .update_leverage(leverage.to_u32().unwrap_or(0), &symbol, false, Some(&self.client.wallet))
+            .await;
 
         let response = match sdk_result {
             Ok(resp) => resp,
-            Err(e) => return Err(PointsBotError::Exchange {
-                code: "500".to_string(),
-                message: format!("Failed to update leverage: {e}"),
-            }),
+            Err(e) => {
+                return Err(PointsBotError::Exchange {
+                    code: "500".to_string(),
+                    message: format!("Failed to update leverage: {e}"),
+                });
+            }
         };
 
         match response {

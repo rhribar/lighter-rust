@@ -1,8 +1,5 @@
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
-use crate::{
-    AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
-    parse_decimal,
-};
+use crate::{AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection, parse_decimal};
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -81,10 +78,7 @@ pub struct FetcherExtended {
 
 impl FetcherExtended {
     pub fn new() -> Self {
-        let client = HttpClient::new(
-            "https://api.starknet.extended.exchange/api/v1".to_string(),
-            Some(1000),
-        );
+        let client = HttpClient::new("https://api.starknet.extended.exchange/api/v1".to_string(), Some(1000));
 
         let extended_api_key = std::env::var("EXTENDED_API_KEY").ok();
 
@@ -114,12 +108,7 @@ impl FetcherExtended {
             _ => return None,
         };
         Some(Position {
-            symbol: AssetMapping::map_ticker(
-                ExchangeName::Extended,
-                &pos.market,
-                TickerDirection::ToCanonical,
-            )
-            .unwrap_or_else(|| pos.market.clone()),
+            symbol: AssetMapping::map_ticker(ExchangeName::Extended, &pos.market, TickerDirection::ToCanonical).unwrap_or_else(|| pos.market.clone()),
             side,
             size: parse_decimal(&pos.size).ok()?.abs(),
             entry_price: parse_decimal(&pos.entry_price).ok()?,
@@ -135,17 +124,10 @@ impl FetcherExtended {
 impl Fetcher for FetcherExtended {
     async fn get_account_data(&self, _address: &str) -> PointsBotResult<AccountData> {
         let headers = self.get_auth_headers()?;
-        let balance_response = self
-            .client
-            .get("/user/balance", Some(headers.clone()))
-            .await?;
-        let balance_data: ExtendedResponse<ExtendedBalanceData> =
-            self.client.parse_json(balance_response).await?;
+        let balance_response = self.client.get("/user/balance", Some(headers.clone())).await?;
+        let balance_data: ExtendedResponse<ExtendedBalanceData> = self.client.parse_json(balance_response).await?;
         if balance_data.status != "OK" {
-            let error_msg = balance_data
-                .error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "Unknown error".to_string());
+            let error_msg = balance_data.error.map(|e| e.message).unwrap_or_else(|| "Unknown error".to_string());
             return Err(PointsBotError::Exchange {
                 code: balance_data.status,
                 message: format!("Extended API error: {}", error_msg),
@@ -162,29 +144,21 @@ impl Fetcher for FetcherExtended {
         };
         let positions_response = self.client.get("/user/positions", Some(headers)).await?;
         let raw_positions_response = positions_response.text().await?;
-        let positions_data: ExtendedResponse<Vec<ExtendedPositionData>> =
-            serde_json::from_str(&raw_positions_response)?;
+        let positions_data: ExtendedResponse<Vec<ExtendedPositionData>> = serde_json::from_str(&raw_positions_response)?;
         let positions_vec = match positions_data.status.as_str() {
             "OK" => positions_data.data.unwrap_or_default(),
             _ => Vec::new(),
         };
         let total_position_value = positions_vec
             .iter()
-            .map(|pos| {
-                pos.position_value
-                    .parse::<Decimal>()
-                    .unwrap_or(Decimal::ZERO)
-            })
+            .map(|pos| pos.position_value.parse::<Decimal>().unwrap_or(Decimal::ZERO))
             .sum::<Decimal>();
         let total_margin = positions_vec
             .iter()
             .map(|pos| pos.margin.parse::<Decimal>().unwrap_or(Decimal::ZERO))
             .sum::<Decimal>();
         let account_value = balance.equity.parse::<Decimal>().unwrap_or(Decimal::ZERO);
-        let available_balance = balance
-            .available_for_withdrawal
-            .parse::<Decimal>()
-            .unwrap_or(Decimal::ZERO);
+        let available_balance = balance.available_for_withdrawal.parse::<Decimal>().unwrap_or(Decimal::ZERO);
         let total_raw_usd = balance.balance.parse::<Decimal>().unwrap_or(Decimal::ZERO);
         let positions = positions_vec
             .into_iter()
@@ -205,18 +179,11 @@ impl Fetcher for FetcherExtended {
 
     async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>> {
         let headers = self.get_auth_headers()?;
-        let response = self
-            .client
-            .get("/info/markets", Some(headers.clone()))
-            .await?;
-        let data: ExtendedResponse<Vec<ExtendedMarketData>> =
-            self.client.parse_json(response).await?;
+        let response = self.client.get("/info/markets", Some(headers.clone())).await?;
+        let data: ExtendedResponse<Vec<ExtendedMarketData>> = self.client.parse_json(response).await?;
 
         if data.status != "OK" {
-            let error_msg = data
-                .error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "Unknown error".to_string());
+            let error_msg = data.error.map(|e| e.message).unwrap_or_else(|| "Unknown error".to_string());
             return Err(PointsBotError::Exchange {
                 code: data.status,
                 message: format!("Extended API error: {}", error_msg),
@@ -227,12 +194,8 @@ impl Fetcher for FetcherExtended {
 
         let mut market_infos = Vec::new();
         for market in markets {
-            let symbol = AssetMapping::map_ticker(
-                ExchangeName::Extended,
-                &market.name,
-                TickerDirection::ToCanonical,
-            )
-            .unwrap_or_else(|| market.name.clone());
+            let symbol =
+                AssetMapping::map_ticker(ExchangeName::Extended, &market.name, TickerDirection::ToCanonical).unwrap_or_else(|| market.name.clone());
 
             let funding_rate = Decimal::from_str(&market.market_stats.funding_rate)?;
             let bid_price = Decimal::from_str(&market.market_stats.bid_price)?;

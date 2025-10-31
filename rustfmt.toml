@@ -1,7 +1,7 @@
-max_width = 100               # Limit line length strictly to 100 characters
+max_width = 150               # Limit line length strictly to 100 characters
 hard_tabs = false             # Use spaces for indentation
 tab_spaces = 4                # Four spaces per indent level
 reorder_imports = true        # Sort imports alphabetically for logical ordering
-comment_width = 100           # Wrap comments at 100 characters for readability
+comment_width = 120           # Wrap comments at 100 characters for readability
 newline_style = "Unix"        # Unix-style line endings
 imports_granularity = "Crate" # new way to merge imports

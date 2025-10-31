@@ -1,14 +1,12 @@
 use async_trait::async_trait;
 use chrono::Utc;
+use log::info;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
-use crate::{
-    AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
-    parse_decimal,
-};
+use crate::{AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection, parse_decimal};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,8 +22,8 @@ struct HyperliquidAccountData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HyperliquidAssetPosition {
-    #[serde(rename = "type")]
     position: HyperliquidPosition,
+    #[serde(rename = "type")]
     _position_type: String,
 }
 
@@ -115,8 +113,7 @@ impl FetcherHyperliquid {
         let entry_price = parse_decimal(&position.entry_px).ok()?;
         let unrealized_pnl = parse_decimal(&position.unrealized_pnl).ok()?;
         let margin_used = parse_decimal(position.margin_used.as_deref().unwrap_or("0")).ok()?;
-        let liquidation_price =
-            parse_decimal(position.liquidation_px.as_deref().unwrap_or("0")).ok()?;
+        let liquidation_price = parse_decimal(position.liquidation_px.as_deref().unwrap_or("0")).ok()?;
         Some(Position {
             symbol: AssetMapping::map_ticker(
                 ExchangeName::Hyperliquid,
@@ -130,11 +127,7 @@ impl FetcherHyperliquid {
             unrealized_pnl,
             margin_used,
             liquidation_price: Some(liquidation_price),
-            cum_funding: Some(
-                parse_decimal(&position.cum_funding.since_open)
-                    .ok()
-                    .unwrap_or(Decimal::ZERO),
-            ),
+            cum_funding: Some(parse_decimal(&position.cum_funding.since_open).ok().unwrap_or(Decimal::ZERO)),
         })
     }
 }
@@ -147,12 +140,12 @@ impl Fetcher for FetcherHyperliquid {
             "user": address
         });
 
-        let response = self
-            .client
-            .post("/info", &payload.to_string(), None)
-            .await?;
+        let response = self.client.post("/info", &payload.to_string(), None).await?;
         let response_body = response.text().await?;
+        info!("Response body: {}", response_body);
+
         let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
+
 
         let account_value = parse_decimal(&account_data.margin_summary.account_value)?;
         let total_margin_used = parse_decimal(&account_data.margin_summary.total_margin_used)?;
@@ -161,11 +154,7 @@ impl Fetcher for FetcherHyperliquid {
         let withdrawable = parse_decimal(&account_data.withdrawable)?;
         let available_balance = withdrawable;
 
-        let positions: Vec<Position> = account_data
-            .asset_positions
-            .iter()
-            .filter_map(Self::parse_position)
-            .collect();
+        let positions: Vec<Position> = account_data.asset_positions.iter().filter_map(Self::parse_position).collect();
 
         Ok(AccountData {
             account_value,
@@ -185,10 +174,7 @@ impl Fetcher for FetcherHyperliquid {
             "type": "metaAndAssetCtxs"
         });
 
-        let response = self
-            .client
-            .post("/info", &payload.to_string(), None)
-            .await?;
+        let response = self.client.post("/info", &payload.to_string(), None).await?;
         let data: serde_json::Value = self.client.parse_json(response).await?;
 
         let data_array = data.as_array().ok_or_else(|| PointsBotError::Parse {
@@ -203,17 +189,15 @@ impl Fetcher for FetcherHyperliquid {
             });
         }
 
-        let meta_data: HyperliquidMeta =
-            serde_json::from_value(data_array[0].clone()).map_err(|e| PointsBotError::Parse {
-                msg: "Failed to parse meta".to_string(),
-                source: Some(Box::new(e)),
-            })?;
+        let meta_data: HyperliquidMeta = serde_json::from_value(data_array[0].clone()).map_err(|e| PointsBotError::Parse {
+            msg: "Failed to parse meta".to_string(),
+            source: Some(Box::new(e)),
+        })?;
 
-        let asset_ctxs: Vec<HyperliquidAssetCtx> = serde_json::from_value(data_array[1].clone())
-            .map_err(|e| PointsBotError::Parse {
-                msg: "Failed to parse asset contexts".to_string(),
-                source: Some(Box::new(e)),
-            })?;
+        let asset_ctxs: Vec<HyperliquidAssetCtx> = serde_json::from_value(data_array[1].clone()).map_err(|e| PointsBotError::Parse {
+            msg: "Failed to parse asset contexts".to_string(),
+            source: Some(Box::new(e)),
+        })?;
 
         let mut markets = Vec::new();
         for (i, token_info) in meta_data.universe.iter().enumerate() {
@@ -222,12 +206,8 @@ impl Fetcher for FetcherHyperliquid {
                 let funding_rate = parse_decimal(&ctx.funding)?;
                 let bid_price = parse_decimal(&ctx.mark_px)?;
                 let ask_price = parse_decimal(&ctx.mark_px)?;
-                let symbol = AssetMapping::map_ticker(
-                    ExchangeName::Hyperliquid,
-                    &token_info.name.clone(),
-                    TickerDirection::ToCanonical,
-                )
-                .unwrap_or_else(|| token_info.name.clone());
+                let symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &token_info.name.clone(), TickerDirection::ToCanonical)
+                    .unwrap_or_else(|| token_info.name.clone());
 
                 markets.push(MarketInfo {
                     symbol: symbol.clone(),

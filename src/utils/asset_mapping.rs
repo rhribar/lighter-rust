@@ -9,17 +9,11 @@ pub enum TickerDirection {
 pub struct AssetMapping;
 
 impl AssetMapping {
-    pub fn map_ticker(
-        exchange: ExchangeName,
-        symbol: &str,
-        direction: TickerDirection,
-    ) -> Option<String> {
+    pub fn map_ticker(exchange: ExchangeName, symbol: &str, direction: TickerDirection) -> Option<String> {
         match direction {
             TickerDirection::ToCanonical => {
                 let s = match exchange {
-                    ExchangeName::Extended => {
-                        symbol.strip_suffix("-USD").unwrap_or(symbol).to_string()
-                    }
+                    ExchangeName::Extended => symbol.strip_suffix("-USD").unwrap_or(symbol).to_string(),
                     _ => symbol.to_string(),
                 };
                 match exchange {

@@ -77,16 +77,12 @@ pub async fn init_extended_markets() -> Result<()> {
         map.insert(m.name, cfg);
     }
 
-    EXTENDED_MARKETS
-        .set(map)
-        .map_err(|_| anyhow!("extended markets already initialised"))
+    EXTENDED_MARKETS.set(map).map_err(|_| anyhow!("extended markets already initialised"))
 }
 
 /// Immutable handle to the loaded market map.
 pub fn extended_markets() -> &'static HashMap<String, MarketConfig> {
-    EXTENDED_MARKETS
-        .get()
-        .expect("call init_extended_markets() first")
+    EXTENDED_MARKETS.get().expect("call init_extended_markets() first")
 }
 
 /// All Extended-specific constants that influence hashing & conversions.
@@ -155,10 +151,7 @@ pub fn sign_limit_ioc(
     domain_revision: Option<String>,
 ) -> Result<Signature> {
     if qty_synthetic < cfg.min_qty_synthetic && !is_reduce_only {
-        return Err(anyhow!(
-            "qty below exchange minimum ({} synthetic)",
-            cfg.min_qty_synthetic
-        ));
+        return Err(anyhow!("qty below exchange minimum ({} synthetic)", cfg.min_qty_synthetic));
     }
     if qty_synthetic * limit_price > cfg.max_limit_value {
         return Err(anyhow!("order value exceeds exchange cap"));
@@ -182,10 +175,7 @@ pub fn sign_limit_ioc(
     .to_u64()
     .unwrap();
 
-    let fee_internal = (Decimal::from(collateral_internal) * fee_rate)
-        .ceil()
-        .to_u64()
-        .unwrap();
+    let fee_internal = (Decimal::from(collateral_internal) * fee_rate).ceil().to_u64().unwrap();
 
     // ───── expiry & nonce ─────
     /* let expiry_hours: u32 = match expiry_ts_ms {
@@ -247,13 +237,9 @@ pub fn sign_limit_ioc(
         format!("0x{}", user_public_key_hex)
     };
 
-    let domain_name_val = domain_name
-        .clone()
-        .unwrap_or_else(|| "Perpetuals".to_string());
+    let domain_name_val = domain_name.clone().unwrap_or_else(|| "Perpetuals".to_string());
     let domain_version_val = domain_version.clone().unwrap_or_else(|| "v0".to_string());
-    let domain_chain_id_val = domain_chain_id
-        .clone()
-        .unwrap_or_else(|| "SN_MAIN".to_string());
+    let domain_chain_id_val = domain_chain_id.clone().unwrap_or_else(|| "SN_MAIN".to_string());
     let domain_revision_val = domain_revision.clone().unwrap_or_else(|| "1".to_string());
 
     info!(
