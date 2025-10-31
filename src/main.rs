@@ -30,8 +30,8 @@ async fn main() -> Result<()> {
     let operator_extended = Box::new(OperatorExtended::new().await);
 
     if config.mode == BotMode::Production {
-        let schedule = Schedule::from_str("0 */10 * * * * *").unwrap(); // 0 55 0,8,16 * * * *
-
+        let schedule = Schedule::from_str("0 40 0,8,16 * * * *").unwrap(); // 0 40 0,8,16 * * * *
+        // 0 */10 * * * * *
         loop {
             let now = Utc::now();
             if let Some(next) = schedule.upcoming(Utc).next() {
