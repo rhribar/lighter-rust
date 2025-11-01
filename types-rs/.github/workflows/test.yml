@@ -1,0 +1,38 @@
+on: [push, pull_request]
+
+name: Test
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain
+        run: rustup show
+
+      - name: Run cargo fmt
+        run: cargo fmt -- --check
+
+      - name: Run cargo clippy
+        run: cargo clippy --all-features -- -D warnings
+
+      - name: Run cargo clippy alloc
+        run: >
+          cargo clippy --no-default-features  --features alloc,serde -- -D warnings
+      - name: Run cargo test
+        run: cargo test --all-features
+
+      - name: Run cargo test alloc
+        run: cargo test --no-default-features --features alloc,serde
+
+  no-std-build:
+    name: Test no_std support
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check wasm compatibility
+        run: |-
+          cd ensure_no_std
+          rustup show
+          cargo build -r

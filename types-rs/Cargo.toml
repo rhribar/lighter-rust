@@ -1,0 +1,23 @@
+[workspace]
+members = [
+    "crates/starknet-types-core",
+]
+
+exclude = ["ensure_no_std", "fuzz"]
+resolver = "2"
+
+[workspace.package]
+authors = [
+    "Pedro Fontana <@pefontana>",
+    "Mario Rugiero <@Oppen>",
+    "Lucas Levy <@LucasLvy>",
+    "Shahar Papini <@spapinistarkware>",
+    "Abdelhamid Bakhta <@abdelhamidbakhta>",
+    "Dan Brownstein <@dan-starkware>",
+    "Federico Carrone <@unbalancedparentheses>",
+    "Jonathan Lei <@xJonathanLEI>",
+    "Maciej Kamiński <@maciejka>",
+    "Timothée Delabrouille <@tdelabro>"
+]
+edition = "2021"
+repository = "https://github.com/starknet-io/types-rs"
