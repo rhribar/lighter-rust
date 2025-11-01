@@ -146,7 +146,6 @@ impl Fetcher for FetcherHyperliquid {
 
         let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
 
-
         let account_value = parse_decimal(&account_data.margin_summary.account_value)?;
         let total_margin_used = parse_decimal(&account_data.margin_summary.total_margin_used)?;
         let total_ntl_pos = parse_decimal(&account_data.margin_summary.total_ntl_pos)?;

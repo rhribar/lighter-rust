@@ -1,7 +1,7 @@
 [package]
 name = "points_bot_rs"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Fetchers and Operators"
 authors = ["rocky"]
 license = "MIT"
@@ -37,6 +37,6 @@ rand = "0.8"
 uuid = { version = "1.3", features = ["v4"] }
 cron = "0.12"
 primitive-types = "0.13"
-tokio-cron-scheduler = "0.15.1"
 
-
+[patch.crates-io]
+starknet-types-core = { path = "./types-rs" }

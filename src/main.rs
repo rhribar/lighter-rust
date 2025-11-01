@@ -4,7 +4,7 @@ use cron::Schedule;
 use log::{error, info};
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use std::str::FromStr;
-use tokio::time::{sleep};
+use tokio::time::sleep;
 
 use points_bot_rs::{
     BotConfig, BotMode, ExchangeName, PointsBotResult, PositionSide,
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let operator_extended = Box::new(OperatorExtended::new().await);
 
     if config.mode == BotMode::Production {
-        let schedule = Schedule::from_str("0 40 0,8,16 * * * *").unwrap(); // 0 40 0,8,16 * * * *
+        let schedule = Schedule::from_str("0 40 0,8,16 * * * *s").unwrap(); // 0 40 0,8,16 * * * *
         // 0 */10 * * * * *
         loop {
             let now = Utc::now();
@@ -103,7 +103,15 @@ async fn trade(
         extended_markets.first()
     );
 
-    let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&hyperliquid_markets, &extended_markets).await;
+    let exclude_tickers = vec!["MEGA", "MON"];
+
+    let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&hyperliquid_markets, &extended_markets)
+        .await
+        .into_iter()
+        .filter(|op| !exclude_tickers.contains(&op.0.as_str()))
+        .collect::<Vec<_>>();
+
+    info!("Arbitrage Opportunities: {:?}", arbitrage_opportunities);
 
     if let Some((symbol, hyper_rate, ext_rate, diff, hyper_leverage, ext_leverage, price_crossed, bid_opportunity_price, ask_opportunity_price)) =
         arbitrage_opportunities.first()
@@ -338,12 +346,7 @@ async fn set_same_leverage(
     }
 }
 
-async fn get_adjusted_price_and_side(
-    market: &MarketInfo,
-    side: &PositionSide,
-    close: bool,
-    operator: &dyn Operator,
-) -> (Decimal, PositionSide) {
+async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, close: bool, operator: &dyn Operator) -> (Decimal, PositionSide) {
     // Dynamically adjust bips_offset based on operator type
     let bips_offset = match operator.get_exchange_info() {
         ExchangeName::Hyperliquid => Decimal::from_f64(0.0).unwrap(),
@@ -352,7 +355,7 @@ async fn get_adjusted_price_and_side(
     };
 
     //     ExchangeName::Hyperliquid => Decimal::from_f64(if *side == PositionSide::Long { 0.0 } else { -0.001 }).unwrap(),
-    
+
     let scale_ask = market.ask_price.scale();
     let scale_bid = market.bid_price.scale();
 
@@ -361,14 +364,20 @@ async fn get_adjusted_price_and_side(
     match side {
         PositionSide::Long => {
             if close {
-                ((market.ask_price * (Decimal::ONE + bips_offset + cross_book_offset_for_closing)).round_dp(scale_ask), PositionSide::Short)
+                (
+                    (market.ask_price * (Decimal::ONE + bips_offset + cross_book_offset_for_closing)).round_dp(scale_ask),
+                    PositionSide::Short,
+                )
             } else {
                 ((market.ask_price * (Decimal::ONE - bips_offset)).round_dp(scale_ask), PositionSide::Long)
             }
         }
         PositionSide::Short => {
             if close {
-                ((market.bid_price * (Decimal::ONE - bips_offset - cross_book_offset_for_closing)).round_dp(scale_bid), PositionSide::Long)
+                (
+                    (market.bid_price * (Decimal::ONE - bips_offset - cross_book_offset_for_closing)).round_dp(scale_bid),
+                    PositionSide::Long,
+                )
             } else {
                 ((market.bid_price * (Decimal::ONE + bips_offset)).round_dp(scale_bid), PositionSide::Short)
             }
