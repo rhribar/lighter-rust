@@ -51,6 +51,8 @@ struct ExtendedMarketData {
     market_stats: ExtendedMarketStats,
     #[serde(rename = "tradingConfig")]
     trading_config: ExtendedTradingConfig,
+    #[serde(rename = "assetPrecision")]
+    asset_precision: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +70,7 @@ struct ExtendedTradingConfig {
     #[serde(rename = "maxLeverage")]
     max_leverage: String,
     #[serde(rename = "minOrderSize")]
-    min_order_size: String,
+    _min_order_size: String,
 }
 
 pub struct FetcherExtended {
@@ -209,7 +211,7 @@ impl Fetcher for FetcherExtended {
                 ask_price,
                 leverage: Decimal::from_str(&market.trading_config.max_leverage)?,
                 funding_rate,
-                min_order_size: Some(Decimal::from_str(&market.trading_config.min_order_size)?),
+                sz_decimals: Decimal::from(market.asset_precision),
             });
         }
 

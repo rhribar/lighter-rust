@@ -45,5 +45,5 @@ pub struct MarketInfo {
     pub ask_price: Decimal,
     pub leverage: Decimal,
     pub funding_rate: Decimal,
-    pub min_order_size: Option<Decimal>,
+    pub sz_decimals: Decimal,
 }

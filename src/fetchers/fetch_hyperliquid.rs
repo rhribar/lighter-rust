@@ -79,13 +79,17 @@ struct AssetCtx {
     name: String,
     #[serde(rename = "maxLeverage")]
     max_leverage: Option<u32>,
+    #[serde(rename = "szDecimals")]
+    sz_decimals: u32,
 }
 
 #[derive(Debug, Deserialize)]
 struct HyperliquidAssetCtx {
     funding: String,
     #[serde(rename = "markPx")]
-    mark_px: String,
+    _mark_px: String,
+    #[serde(rename = "impactPxs")]
+    impact_pxs: Option<Vec<String>>,
 }
 
 pub struct FetcherHyperliquid {
@@ -203,21 +207,26 @@ impl Fetcher for FetcherHyperliquid {
             if i < asset_ctxs.len() {
                 let ctx = &asset_ctxs[i];
                 let funding_rate = parse_decimal(&ctx.funding)?;
-                let bid_price = parse_decimal(&ctx.mark_px)?;
-                let ask_price = parse_decimal(&ctx.mark_px)?;
                 let symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &token_info.name.clone(), TickerDirection::ToCanonical)
                     .unwrap_or_else(|| token_info.name.clone());
 
-                markets.push(MarketInfo {
-                    symbol: symbol.clone(),
-                    base_asset: symbol.clone(),
-                    quote_asset: "USD".to_string(),
-                    bid_price,
-                    ask_price,
-                    leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)),
-                    funding_rate,
-                    min_order_size: None,
-                });
+                let mark_price = parse_decimal(&ctx._mark_px)?.scale();
+
+                if ctx.impact_pxs.as_ref().map_or(false, |pxs| pxs.len() == 2) { // only populate markets if there is bid/ask price
+                    let bid_price = parse_decimal(&ctx.impact_pxs.as_ref().unwrap()[0])?;
+                    let ask_price = parse_decimal(&ctx.impact_pxs.as_ref().unwrap()[1])?;
+
+                    markets.push(MarketInfo {
+                        symbol: symbol.clone(),
+                        base_asset: symbol.clone(),
+                        quote_asset: "USD".to_string(),
+                        bid_price: bid_price.round_dp(mark_price),
+                        ask_price: ask_price.round_dp(mark_price),
+                        leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)),
+                        funding_rate,
+                        sz_decimals: Decimal::from(6 - 1 - token_info.sz_decimals),
+                    });
+                }
             }
         }
 

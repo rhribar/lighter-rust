@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use cron::Schedule;
 use log::{error, info};
-use rust_decimal::{prelude::FromPrimitive, Decimal};
+use rust_decimal::{prelude::FromPrimitive, prelude::ToPrimitive, Decimal};
 use std::str::FromStr;
 use tokio::time::{sleep, Duration};
 
@@ -30,8 +30,11 @@ async fn main() -> Result<()> {
     let operator_extended = Box::new(OperatorExtended::new().await);
 
     if config.mode == BotMode::Production {
-        let schedule = Schedule::from_str("0 40 0,8,16 * * * *").unwrap(); // 0 40 0,8,16 * * * *
-                                                                           // 0 */10 * * * * *
+        let schedule = Schedule::from_str("0 20 0,8,16 * * * *").unwrap(); 
+        // 0 30 0,4,8,12,16,20 * * * *
+        // 0 40 0,8,16 * * * *
+        // 0 */10 * * * * *
+
         loop {
             let now = Utc::now();
             if let Some(next) = schedule.upcoming(Utc).next() {
@@ -96,7 +99,9 @@ async fn trade(
     );
 
     let is_first_time = extended_positions.is_empty();
-    let change_position = !is_first_time && !is_same_symbol;
+    let change_position = !is_first_time && !is_same_symbol && is_better;
+
+    info!("Trade Execution | Is First Time: {} | Change Position: {}", is_first_time, change_position);
 
     if change_position {
         if let Err(e) = close_all_open_positions(
@@ -111,7 +116,10 @@ async fn trade(
         {
             error!("Failed to close positions: {:?}", e);
         }
-        sleep(Duration::from_secs(5 * 60)).await;
+        info!("Sleeping for 20 minutes to allow orders to fill and close");
+        info!("Next trade scheduled at: {:?}", Utc::now() + Duration::from_secs(20 * 60));
+
+        sleep(Duration::from_secs(20 * 60)).await;
     }
 
     if is_first_time || change_position {
@@ -355,16 +363,23 @@ fn calculate_trade_attributes<'a>(
         (ext_market, hyper_market, operator_extended, operator_hyperliquid)
     };
 
-    let max_amount_long = min_available_balance / long_market.ask_price;
-    let max_amount_short = min_available_balance / short_market.bid_price;
+    let leverage = long_market.leverage.min(short_market.leverage);
 
-    let min_order_size = long_market
-        .min_order_size
-        .unwrap_or(Decimal::ZERO)
-        .max(short_market.min_order_size.unwrap_or(Decimal::ZERO));
+    let max_amount_long = (min_available_balance * leverage) / long_market.ask_price;
+    let max_amount_short = (min_available_balance * leverage) / short_market.bid_price;
 
-    let max_amount = max_amount_long.min(max_amount_short).max(min_order_size);
-    let amount = (max_amount / min_order_size).floor() * min_order_size * long_market.leverage.min(short_market.leverage); // adjust to min order size and scale with min leverage
+    info!("Trade Sizes | Long Market: {} | Short Market: {}", long_market.sz_decimals, short_market.sz_decimals);
+
+    let sz_decimals = long_market.sz_decimals.min(short_market.sz_decimals);
+    info!("sz_decimals: {}", sz_decimals);
+
+    let max_amount = max_amount_long.min(max_amount_short);
+    use rust_decimal::RoundingStrategy;
+    let amount = max_amount.round_dp_with_strategy(sz_decimals.to_u32().unwrap_or(0), RoundingStrategy::ToZero);
+
+    info!("Max Amount {} | Amount: {}", max_amount, amount);
+
+    info!("Trade Execution | Amount: {} | Long Market: {} | Short Market: {}", amount, long_market.symbol, short_market.symbol);
 
     (amount, long_market, short_market, long_operator, short_operator)
 }
@@ -404,7 +419,7 @@ async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, c
         PositionSide::Long => {
             if close {
                 (
-                    (market.ask_price * (Decimal::ONE + bips_offset - cross_book_offset_for_closing)).round_dp(scale_ask),
+                    (market.bid_price * (Decimal::ONE + bips_offset - cross_book_offset_for_closing)).round_dp(scale_ask),
                     PositionSide::Short,
                 )
             } else {
@@ -414,7 +429,7 @@ async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, c
         PositionSide::Short => {
             if close {
                 (
-                    (market.bid_price * (Decimal::ONE - bips_offset + cross_book_offset_for_closing)).round_dp(scale_bid),
+                    (market.ask_price * (Decimal::ONE - bips_offset + cross_book_offset_for_closing)).round_dp(scale_bid),
                     PositionSide::Long,
                 )
             } else {
@@ -473,7 +488,7 @@ async fn close_all_open_positions(
             if let Some(market) = markets.iter().find(|m| m.symbol == position.symbol) {
                 let (price_adjusted, side) = get_adjusted_price_and_side(market, &position.side, true, operator).await;
 
-                info!("Closing {label} position: {} with price: {} {:?}", position.symbol, price_adjusted, side);
+                info!("Closing {label} position: {} with adjusted price: {} {:?} Original ask price: {} Original bid price: {}", position.symbol, price_adjusted, side, market.ask_price, market.bid_price);
                 if let Err(e) = create_order(operator, &position.symbol, side, &position.size.abs(), &price_adjusted, Some(true)).await {
                     error!("Failed to close {label} position: {:?}", e);
                 }
