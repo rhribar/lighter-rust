@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use crate::operators::utils::extended_signature::{get_order_hash, sign_message};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::OnceCell;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 use reqwest::Client;
-use rust_decimal::Decimal;
 use rust_decimal::prelude::*; // precise decimals
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use starknet_crypto::Felt;
 
@@ -162,7 +162,11 @@ pub fn sign_limit_ioc(
     // ───── conversions ─────
     let qty_internal = {
         let q = qty_synthetic * Decimal::from(cfg.synthetic_resolution);
-        if is_buy { q.ceil() } else { q.floor() }
+        if is_buy {
+            q.ceil()
+        } else {
+            q.floor()
+        }
     }
     .to_u64()
     .unwrap();
@@ -170,7 +174,11 @@ pub fn sign_limit_ioc(
     let collateral_value = qty_synthetic * limit_price;
     let collateral_internal = {
         let c = collateral_value * Decimal::from(cfg.collateral_resolution);
-        if is_buy { c.ceil() } else { c.floor() }
+        if is_buy {
+            c.ceil()
+        } else {
+            c.floor()
+        }
     }
     .to_u64()
     .unwrap();

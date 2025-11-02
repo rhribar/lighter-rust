@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
 use crate::{
-    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
     operators::{
+        init_extended_markets::{extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc, Side},
         Operator, OrderRequest, OrderResponse,
-        init_extended_markets::{Side, extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc},
     },
+    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
 };
 use async_trait::async_trait;
 use chrono::{Duration, Utc};

@@ -1,5 +1,5 @@
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
-use crate::{AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection, parse_decimal};
+use crate::{parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection};
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use serde::Deserialize;

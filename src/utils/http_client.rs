@@ -90,7 +90,11 @@ impl HttpClient {
             let last_request = self.last_request.lock().unwrap();
             if let Some(last) = *last_request {
                 let elapsed = last.elapsed();
-                if elapsed < interval { Some(interval - elapsed) } else { None }
+                if elapsed < interval {
+                    Some(interval - elapsed)
+                } else {
+                    None
+                }
             } else {
                 None
             }

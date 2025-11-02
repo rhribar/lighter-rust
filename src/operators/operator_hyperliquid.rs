@@ -1,10 +1,10 @@
 use super::base::{Operator, OrderRequest, OrderResponse};
-use crate::{ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection, asset_mapping::AssetMapping};
+use crate::{asset_mapping::AssetMapping, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection};
 use async_trait::async_trait;
 use ethers::signers::LocalWallet;
 use hyperliquid_rust_sdk::{ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus, ExchangeResponseStatus};
 use log::info;
-use rust_decimal::{Decimal, prelude::ToPrimitive};
+use rust_decimal::{prelude::ToPrimitive, Decimal};
 use std::str::FromStr;
 
 pub struct OperatorHyperliquid {

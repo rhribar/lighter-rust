@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
-use crate::{AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection, parse_decimal};
+use crate::{parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
