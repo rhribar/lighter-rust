@@ -71,6 +71,8 @@ struct ExtendedTradingConfig {
     max_leverage: String,
     #[serde(rename = "minOrderSize")]
     _min_order_size: String,
+    #[serde(rename = "minOrderSizeChange")]
+    min_order_size_change: String,
 }
 
 pub struct FetcherExtended {
@@ -212,6 +214,7 @@ impl Fetcher for FetcherExtended {
                 leverage: Decimal::from_str(&market.trading_config.max_leverage)?,
                 funding_rate,
                 sz_decimals: Decimal::from(market.asset_precision),
+                min_order_size_change: Decimal::from_str(&market.trading_config.min_order_size_change)?,
             });
         }
 

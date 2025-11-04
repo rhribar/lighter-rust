@@ -46,4 +46,5 @@ pub struct MarketInfo {
     pub leverage: Decimal,
     pub funding_rate: Decimal,
     pub sz_decimals: Decimal,
+    pub min_order_size_change: Decimal,
 }

@@ -212,7 +212,8 @@ impl Fetcher for FetcherHyperliquid {
 
                 let mark_price = parse_decimal(&ctx._mark_px)?.scale();
 
-                if ctx.impact_pxs.as_ref().map_or(false, |pxs| pxs.len() == 2) { // only populate markets if there is bid/ask price
+                if ctx.impact_pxs.as_ref().map_or(false, |pxs| pxs.len() == 2) {
+                    // only populate markets if there is bid/ask price
                     let bid_price = parse_decimal(&ctx.impact_pxs.as_ref().unwrap()[0])?;
                     let ask_price = parse_decimal(&ctx.impact_pxs.as_ref().unwrap()[1])?;
 
@@ -225,6 +226,7 @@ impl Fetcher for FetcherHyperliquid {
                         leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)),
                         funding_rate,
                         sz_decimals: Decimal::from(6 - 1 - token_info.sz_decimals),
+                        min_order_size_change: Decimal::ZERO, // Hyperliquid does not provide this info
                     });
                 }
             }
