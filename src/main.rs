@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     let operator_extended = Box::new(OperatorExtended::new().await);
 
     if config.mode == BotMode::Production {
-        let schedule = Schedule::from_str("0 20 0,8,16 * * * *").unwrap();
+        let schedule = Schedule::from_str("0 20 0,6,12,18 * * * *").unwrap();
         // 0 30 0,4,8,12,16,20 * * * *
         // 0 40 0,8,16 * * * *
         // 0 */10 * * * * *
@@ -126,7 +126,11 @@ async fn trade(
         info!("Sleeping for 20 minutes to allow orders to fill and close");
         info!("Next trade scheduled at: {:?}", Utc::now() + Duration::from_secs(20 * 60));
 
-        sleep(Duration::from_secs(20 * 60)).await;
+        if config.mode == BotMode::Production {
+            sleep(Duration::from_secs(20 * 60)).await;
+        } else {
+            sleep(Duration::from_secs(5 * 60)).await;
+        }
     }
 
     if is_first_time || change_position {
@@ -391,12 +395,14 @@ fn calculate_trade_attributes<'a>(
     let max_amount = max_amount_long.min(max_amount_short);
     let amount = max_amount.round_dp_with_strategy(sz_decimals.to_u32().unwrap_or(0), RoundingStrategy::ToZero);
 
+
     let size_increment = long_market.min_order_size_change.max(short_market.min_order_size_change);
     let size_increment_dp = size_increment.normalize().scale();
 
-    // Quantize down to the nearest increment
-    let quantized_amount = (amount / size_increment).floor() * size_increment;
-    let quantized_amount = quantized_amount.round_dp(size_increment_dp);
+    // Direct quantization: compute max increments that fit in amount
+    let increments = (amount / size_increment).to_u128().unwrap_or(0);
+    let quantized_amount = (Decimal::from_u128(increments).unwrap_or(Decimal::ZERO) * size_increment)
+        .round_dp(size_increment_dp);
 
     info!("Max Amount {} | Amount: {} Quantized: {}", max_amount, amount, quantized_amount);
 
