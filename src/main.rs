@@ -11,9 +11,7 @@ use tokio::time::{sleep, Duration};
 
 use ethers::signers::LocalWallet;
 use points_bot_rs::{
-    fetchers::{AccountData, Fetcher, FetcherExtended, FetcherHyperliquid, MarketInfo, Position},
-    operators::{create_operator_hyperliquid, Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType},
-    BotConfig, BotMode, ExchangeName, PointsBotResult, PositionSide,
+    BotConfig, BotMode, ExchangeName, OperatorLighter, PointsBotResult, PositionSide, fetchers::{AccountData, Fetcher, FetcherExtended, FetcherHyperliquid, FetcherLighter, MarketInfo, Position}, operators::{Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType, create_operator_hyperliquid}
 };
 use rust_decimal::RoundingStrategy;
 
@@ -29,12 +27,14 @@ async fn main() -> Result<()> {
 
     let fetcher_hyperliquid = Box::new(FetcherHyperliquid::new());
     let fetcher_extended = Box::new(FetcherExtended::new());
+    let fetcher_lighter = Box::new(FetcherLighter::new());
 
     let operator_hyperliquid = create_operator_hyperliquid(wallet).await;
     let operator_extended = Box::new(OperatorExtended::new().await);
+    let operator_lighter = Box::new(OperatorLighter::new().await);
 
     if config.mode == BotMode::Production {
-        let schedule = Schedule::from_str("0 20 0,6,12,18 * * * *").unwrap();
+        let schedule = Schedule::from_str("0 */10 * * * * *").unwrap();
         // 0 30 0,4,8,12,16,20 * * * *
         // 0 40 0,8,16 * * * *
         // 0 */10 * * * * *
@@ -60,8 +60,8 @@ async fn main() -> Result<()> {
         trade(
             config.clone(),
             fetcher_extended.as_ref(),
-            fetcher_hyperliquid.as_ref(),
-            operator_hyperliquid.as_ref(),
+            fetcher_lighter.as_ref(),
+            operator_lighter.as_ref(),
             operator_extended.as_ref(),
         )
         .await;
@@ -78,9 +78,18 @@ async fn trade(
 ) {
     let (hyperliquid_positions, extended_positions, _) = get_and_handle_account_data(fetcher_hyperliquid, fetcher_extended, &config).await;
 
+    info!("Positions | Lighter: {:?}", hyperliquid_positions);
+
     let (hyperliquid_markets, extended_markets) = get_and_handle_markets(fetcher_hyperliquid, fetcher_extended).await;
 
-    let (arbitrage_opportunities, best_price_crossed_opportunity) = get_and_handle_opportunities(&hyperliquid_markets, &extended_markets).await;
+    info!("Markets | Lighter count: {}", hyperliquid_markets.len());
+
+    match create_order(operator_hyperliquid, "BTC", PositionSide::Short, &Decimal::from_f64(0.0002).unwrap(), &Decimal::from_f64(1030000.00).unwrap(), Some(false)).await {
+        Ok(order_result) => info!("Short order: {:?}", order_result),
+        Err(e) => error!("Short order failed: {:?}", e),
+    }
+
+    /*let (arbitrage_opportunities, best_price_crossed_opportunity) = get_and_handle_opportunities(&hyperliquid_markets, &extended_markets).await;
 
     let (symbol, _, _, diff, ..) = best_price_crossed_opportunity.unwrap();
 
@@ -108,9 +117,9 @@ async fn trade(
     info!(
         "Trade Execution | Is First Time: {} | Change Position: {}",
         is_first_time, change_position
-    );
+    ); */
 
-    if change_position {
+    /* if change_position {
         if let Err(e) = close_all_open_positions(
             &hyperliquid_positions,
             &extended_positions,
@@ -131,9 +140,9 @@ async fn trade(
         } else {
             sleep(Duration::from_secs(5 * 60)).await;
         }
-    }
+    } */
 
-    if is_first_time || change_position {
+    /* if is_first_time || change_position {
         let (_, _, min_available_balance) = get_and_handle_account_data(fetcher_hyperliquid, fetcher_extended, &config).await;
 
         let (hyperliquid_markets, extended_markets) = get_and_handle_markets(fetcher_hyperliquid, fetcher_extended).await;
@@ -178,7 +187,7 @@ async fn trade(
         } else {
             error!("No arbitrage opportunities available.");
         }
-    }
+    } */
 }
 
 async fn get_and_handle_account_data(
@@ -395,14 +404,12 @@ fn calculate_trade_attributes<'a>(
     let max_amount = max_amount_long.min(max_amount_short);
     let amount = max_amount.round_dp_with_strategy(sz_decimals.to_u32().unwrap_or(0), RoundingStrategy::ToZero);
 
-
     let size_increment = long_market.min_order_size_change.max(short_market.min_order_size_change);
     let size_increment_dp = size_increment.normalize().scale();
 
     // Direct quantization: compute max increments that fit in amount
     let increments = (amount / size_increment).to_u128().unwrap_or(0);
-    let quantized_amount = (Decimal::from_u128(increments).unwrap_or(Decimal::ZERO) * size_increment)
-        .round_dp(size_increment_dp);
+    let quantized_amount = (Decimal::from_u128(increments).unwrap_or(Decimal::ZERO) * size_increment).round_dp(size_increment_dp);
 
     info!("Max Amount {} | Amount: {} Quantized: {}", max_amount, amount, quantized_amount);
 

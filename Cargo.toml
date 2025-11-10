@@ -37,6 +37,11 @@ rand = "0.8"
 uuid = { version = "1.3", features = ["v4"] }
 cron = "0.12"
 primitive-types = "0.13"
+async-tungstenite = { version = "0.32.0", features = ["tokio-runtime", "tokio-native-tls"] }
+futures = "0.3.31"
+api-client = { path = "lighter-rust/api-client" }
+signer = { path = "lighter-rust/signer" }
+base64 = "0.22.1"
 
 [patch.crates-io]
 starknet-types-core = { path = "./types-rs/crates/starknet-types-core" }

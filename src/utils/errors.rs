@@ -1,3 +1,4 @@
+use async_tungstenite::tungstenite::Error as TungsteniteError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -83,6 +84,15 @@ impl From<serde_json::Error> for PointsBotError {
         PointsBotError::Parse {
             msg: format!("Serde JSON error: {}", e),
             source: Some(Box::new(e)),
+        }
+    }
+}
+
+impl From<TungsteniteError> for PointsBotError {
+    fn from(err: TungsteniteError) -> Self {
+        PointsBotError::Unknown {
+            msg: format!("Tungstenite error: {}", err),
+            source: Some(Box::new(err)),
         }
     }
 }

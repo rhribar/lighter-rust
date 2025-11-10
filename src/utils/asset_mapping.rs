@@ -24,6 +24,12 @@ impl AssetMapping {
                         "XAUT" => Some("XAU".to_string()),
                         _ => Some(s),
                     },
+                    ExchangeName::Lighter => match s.as_str() {
+                        "1000PEPE" => Some("kPEPE".to_string()),
+                        "1000SHIB" => Some("kSHIB".to_string()),
+                        "1000BONK" => Some("kBONK".to_string()),
+                        _ => Some(s),
+                    },
                     _ => Some(s),
                 }
             }
@@ -34,6 +40,12 @@ impl AssetMapping {
                         "kSHIB" => "1000SHIB",
                         "kBONK" => "1000BONK",
                         "XAU" => "XAUT",
+                        _ => symbol,
+                    },
+                    ExchangeName::Lighter => match symbol {
+                        "kPEPE" => "1000PEPE",
+                        "kSHIB" => "1000SHIB",
+                        "kBONK" => "1000BONK",
                         _ => symbol,
                     },
                     _ => symbol,
