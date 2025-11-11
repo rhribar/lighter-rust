@@ -1,0 +1,16 @@
+[package]
+name = "signer-ext"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+goldilocks-crypto = { path = "../crypto" }
+poseidon-hash = { path = "../poseidon-hash" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+base64 = "0.21"
