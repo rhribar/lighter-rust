@@ -6,7 +6,9 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
-use crate::{parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection};
+use crate::{
+    parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,13 +133,21 @@ impl FetcherHyperliquid {
             unrealized_pnl,
             margin_used,
             liquidation_price: Some(liquidation_price),
-            cum_funding: Some(parse_decimal(&position.cum_funding.since_open).ok().unwrap_or(Decimal::ZERO)),
+            cum_funding: Some(
+                parse_decimal(&position.cum_funding.since_open)
+                    .ok()
+                    .unwrap_or(Decimal::ZERO),
+            ),
         })
     }
 }
 
 #[async_trait]
 impl Fetcher for FetcherHyperliquid {
+    fn get_exchange_info(&self) -> ExchangeName {
+        ExchangeName::Hyperliquid
+    }
+
     async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData> {
         let payload = json!({
             "type": "clearinghouseState",
@@ -157,7 +167,11 @@ impl Fetcher for FetcherHyperliquid {
         let withdrawable = parse_decimal(&account_data.withdrawable)?;
         let available_balance = withdrawable;
 
-        let positions: Vec<Position> = account_data.asset_positions.iter().filter_map(Self::parse_position).collect();
+        let positions: Vec<Position> = account_data
+            .asset_positions
+            .iter()
+            .filter_map(Self::parse_position)
+            .collect();
 
         Ok(AccountData {
             account_value,
@@ -192,23 +206,29 @@ impl Fetcher for FetcherHyperliquid {
             });
         }
 
-        let meta_data: HyperliquidMeta = serde_json::from_value(data_array[0].clone()).map_err(|e| PointsBotError::Parse {
-            msg: "Failed to parse meta".to_string(),
-            source: Some(Box::new(e)),
-        })?;
+        let meta_data: HyperliquidMeta =
+            serde_json::from_value(data_array[0].clone()).map_err(|e| PointsBotError::Parse {
+                msg: "Failed to parse meta".to_string(),
+                source: Some(Box::new(e)),
+            })?;
 
-        let asset_ctxs: Vec<HyperliquidAssetCtx> = serde_json::from_value(data_array[1].clone()).map_err(|e| PointsBotError::Parse {
-            msg: "Failed to parse asset contexts".to_string(),
-            source: Some(Box::new(e)),
-        })?;
+        let asset_ctxs: Vec<HyperliquidAssetCtx> =
+            serde_json::from_value(data_array[1].clone()).map_err(|e| PointsBotError::Parse {
+                msg: "Failed to parse asset contexts".to_string(),
+                source: Some(Box::new(e)),
+            })?;
 
         let mut markets = Vec::new();
         for (i, token_info) in meta_data.universe.iter().enumerate() {
             if i < asset_ctxs.len() {
                 let ctx = &asset_ctxs[i];
                 let funding_rate = parse_decimal(&ctx.funding)?;
-                let symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &token_info.name.clone(), TickerDirection::ToCanonical)
-                    .unwrap_or_else(|| token_info.name.clone());
+                let symbol = AssetMapping::map_ticker(
+                    ExchangeName::Hyperliquid,
+                    &token_info.name.clone(),
+                    TickerDirection::ToCanonical,
+                )
+                .unwrap_or_else(|| token_info.name.clone());
 
                 let mark_price = parse_decimal(&ctx._mark_px)?.scale();
 
@@ -218,6 +238,7 @@ impl Fetcher for FetcherHyperliquid {
                     let ask_price = parse_decimal(&ctx.impact_pxs.as_ref().unwrap()[1])?;
 
                     markets.push(MarketInfo {
+                        exchange_id: None,
                         symbol: symbol.clone(),
                         base_asset: symbol.clone(),
                         quote_asset: "USD".to_string(),
@@ -226,6 +247,7 @@ impl Fetcher for FetcherHyperliquid {
                         leverage: Decimal::from(token_info.max_leverage.unwrap_or(5)),
                         funding_rate,
                         sz_decimals: Decimal::from(6 - 1 - token_info.sz_decimals),
+                        px_decimals: Decimal::ZERO,
                         min_order_size_change: Decimal::ZERO, // Hyperliquid does not provide this info
                     });
                 }

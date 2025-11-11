@@ -214,7 +214,8 @@ mod tests {
         };
 
         let actual = transfer_args.hash();
-        let expected = Felt::from_dec_str("2223969487713427665389808888239017784545324676732964616876966103908214316949").unwrap();
+        let expected =
+            Felt::from_dec_str("2223969487713427665389808888239017784545324676732964616876966103908214316949").unwrap();
         assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
     }
 
@@ -231,7 +232,8 @@ mod tests {
             salt: Felt::from_dec_str("6").unwrap(),
         };
 
-        let user_key = Felt::from_dec_str("2629686405885377265612250192330550814166101744721025672593857097107510831364").unwrap();
+        let user_key =
+            Felt::from_dec_str("2629686405885377265612250192330550814166101744721025672593857097107510831364").unwrap();
 
         let actual = transfer_args.message_hash(&SEPOLIA_DOMAIN, user_key).unwrap();
 
@@ -260,7 +262,8 @@ mod tests {
         };
 
         let actual = order.hash();
-        let expected = Felt::from_dec_str("1329353150252109345267997901008558234696410103652961347079636617692652241760").unwrap();
+        let expected =
+            Felt::from_dec_str("1329353150252109345267997901008558234696410103652961347079636617692652241760").unwrap();
         assert_eq!(actual, expected, "Hashes do not match for Order");
     }
 
@@ -284,10 +287,12 @@ mod tests {
             salt: Felt::from_dec_str("9").unwrap(),
         };
 
-        let user_key = Felt::from_dec_str("1528491859474308181214583355362479091084733880193869257167008343298409336538").unwrap();
+        let user_key =
+            Felt::from_dec_str("1528491859474308181214583355362479091084733880193869257167008343298409336538").unwrap();
 
         let hash = order.message_hash(&SEPOLIA_DOMAIN, user_key).unwrap();
-        let expected_hash = Felt::from_dec_str("2788960362996410178586013462192086205585543858281504820767681025777602529597").unwrap();
+        let expected_hash =
+            Felt::from_dec_str("2788960362996410178586013462192086205585543858281504820767681025777602529597").unwrap();
         info!("{}", expected_hash.to_hex_string());
         assert_eq!(hash, expected_hash);
     }

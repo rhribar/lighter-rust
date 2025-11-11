@@ -1,4 +1,4 @@
-use crate::{ExchangeName, PointsBotResult, PositionSide};
+use crate::{fetchers::MarketInfo, ExchangeName, PointsBotResult, PositionSide};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -12,7 +12,7 @@ pub trait Operator: Send + Sync {
 
     async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse>;
 
-    async fn change_leverage(&self, symbol: String, leverage: Decimal) -> PointsBotResult<()>;
+    async fn change_leverage(&self, market: MarketInfo, leverage: Decimal) -> PointsBotResult<()>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ impl OrderType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderRequest {
     pub id: String,
-    pub symbol: String,
+    pub market: MarketInfo,
     pub side: PositionSide,
     pub order_type: OrderType,
     pub quantity: Decimal,

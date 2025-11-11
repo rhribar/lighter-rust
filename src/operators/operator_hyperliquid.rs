@@ -1,8 +1,13 @@
 use super::base::{Operator, OrderRequest, OrderResponse};
-use crate::{asset_mapping::AssetMapping, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection};
+use crate::{
+    asset_mapping::AssetMapping, fetchers::MarketInfo, ExchangeName, OrderStatus, PointsBotError, PointsBotResult,
+    PositionSide, TickerDirection,
+};
 use async_trait::async_trait;
 use ethers::signers::LocalWallet;
-use hyperliquid_rust_sdk::{ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus, ExchangeResponseStatus};
+use hyperliquid_rust_sdk::{
+    ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus, ExchangeResponseStatus,
+};
 use log::info;
 use rust_decimal::{prelude::ToPrimitive, Decimal};
 use std::str::FromStr;
@@ -31,11 +36,14 @@ impl Operator for OperatorHyperliquid {
     }
 
     async fn create_order(&self, mut order: OrderRequest) -> PointsBotResult<OrderResponse> {
-        order.symbol =
-            AssetMapping::map_ticker(ExchangeName::Hyperliquid, &order.symbol, TickerDirection::ToExchange).unwrap_or_else(|| order.symbol.clone());
-
+        order.market.symbol = AssetMapping::map_ticker(
+            ExchangeName::Hyperliquid,
+            &order.market.symbol,
+            TickerDirection::ToExchange,
+        )
+        .unwrap_or_else(|| order.market.symbol.clone());
         let sdk_order = ClientOrderRequest {
-            asset: order.symbol.clone(),
+            asset: order.market.symbol.clone(),
             is_buy: matches!(order.side, PositionSide::Long),
             limit_px: order.price.unwrap_or(Decimal::ZERO).to_f64().unwrap_or(0.0),
             sz: order.quantity.to_f64().unwrap_or(0.0),
@@ -69,7 +77,7 @@ impl Operator for OperatorHyperliquid {
                             return Ok(OrderResponse {
                                 id: order.id,
                                 exchange_id: resting_order.oid.to_string(),
-                                symbol: order.symbol.clone(),
+                                symbol: order.market.symbol.clone(),
                                 side: order.side,
                                 status: OrderStatus::Resting,
                                 filled_quantity: Decimal::ZERO,
@@ -82,7 +90,7 @@ impl Operator for OperatorHyperliquid {
                             return Ok(OrderResponse {
                                 id: order.id,
                                 exchange_id: filled_order.oid.to_string(),
-                                symbol: order.symbol.clone(),
+                                symbol: order.market.symbol.clone(),
                                 side: order.side,
                                 status: OrderStatus::Filled,
                                 filled_quantity: Decimal::from_str(&filled_order.total_sz).unwrap_or(order.quantity),
@@ -108,12 +116,18 @@ impl Operator for OperatorHyperliquid {
         }
     }
 
-    async fn change_leverage(&self, mut symbol: String, leverage: Decimal) -> PointsBotResult<()> {
-        symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &symbol, TickerDirection::ToExchange).unwrap_or_else(|| symbol.clone());
+    async fn change_leverage(&self, market: MarketInfo, leverage: Decimal) -> PointsBotResult<()> {
+        let symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &market.symbol, TickerDirection::ToExchange)
+            .unwrap_or_else(|| market.symbol.clone());
 
         let sdk_result = self
             .client
-            .update_leverage(leverage.to_u32().unwrap_or(0), &symbol, false, Some(&self.client.wallet))
+            .update_leverage(
+                leverage.to_u32().unwrap_or(0),
+                &symbol,
+                false,
+                Some(&self.client.wallet),
+            )
             .await;
 
         let response = match sdk_result {

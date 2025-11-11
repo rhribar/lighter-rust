@@ -4,7 +4,9 @@ use sha2::{Digest, Sha256};
 use starknet::core::{crypto::ecdsa_sign, types::Felt};
 use std::str::FromStr;
 
-use crate::starknet_messages::{AssetId, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp, TransferArgs, WithdrawalArgs};
+use crate::starknet_messages::{
+    AssetId, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp, TransferArgs, WithdrawalArgs,
+};
 
 pub struct StarkSignature {
     pub r: Felt,
@@ -13,8 +15,10 @@ pub struct StarkSignature {
 }
 
 fn grind_key(key_seed: BigUint) -> BigUint {
-    let two_256 = BigUint::from_str("115792089237316195423570985008687907853269984665640564039457584007913129639936").unwrap();
-    let key_value_limit = BigUint::from_str("3618502788666131213697322783095070105526743751716087489154079457884512865583").unwrap();
+    let two_256 =
+        BigUint::from_str("115792089237316195423570985008687907853269984665640564039457584007913129639936").unwrap();
+    let key_value_limit =
+        BigUint::from_str("3618502788666131213697322783095070105526743751716087489154079457884512865583").unwrap();
 
     let max_allowed_value = two_256.clone() - (two_256.clone() % (&key_value_limit));
     let mut index = BigUint::ZERO;
@@ -78,8 +82,10 @@ pub fn get_order_hash(
     domain_chain_id: String,
     domain_revision: String,
 ) -> Result<Felt, String> {
-    let base_asset_id = Felt::from_hex(&base_asset_id_hex).map_err(|e| format!("Invalid base_asset_id_hex: {:?}", e))?;
-    let quote_asset_id = Felt::from_hex(&quote_asset_id_hex).map_err(|e| format!("Invalid quote_asset_id_hex: {:?}", e))?;
+    let base_asset_id =
+        Felt::from_hex(&base_asset_id_hex).map_err(|e| format!("Invalid base_asset_id_hex: {:?}", e))?;
+    let quote_asset_id =
+        Felt::from_hex(&quote_asset_id_hex).map_err(|e| format!("Invalid quote_asset_id_hex: {:?}", e))?;
     let fee_asset_id = Felt::from_hex(&fee_asset_id_hex).map_err(|e| format!("Invalid fee_asset_id_hex: {:?}", e))?;
     let user_key = Felt::from_hex(&user_public_key_hex).map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
 
@@ -89,7 +95,8 @@ pub fn get_order_hash(
     let fee_amount = u64::from_str_radix(&fee_amount, 10).map_err(|e| format!("Invalid fee_amount: {:?}", e))?;
     let expiration = u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
     let salt = u64::from_str_radix(&salt, 10).map_err(|e| format!("Invalid salt: {:?}", e))?;
-    let revision = u32::from_str_radix(&domain_revision, 10).map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
+    let revision =
+        u32::from_str_radix(&domain_revision, 10).map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
 
     let order = Order {
         position_id: PositionId { value: position_id },
@@ -126,15 +133,19 @@ pub fn get_transfer_hash(
     domain_chain_id: String,
     domain_revision: String,
 ) -> Result<Felt, String> {
-    let collateral_id = Felt::from_hex(&collateral_id_hex).map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
+    let collateral_id =
+        Felt::from_hex(&collateral_id_hex).map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
     let user_key = Felt::from_hex(&user_public_key_hex).map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
 
-    let recipient = u32::from_str_radix(&recipient_position_id, 10).map_err(|e| format!("Invalid recipient_position_id: {:?}", e))?;
-    let position_id = u32::from_str_radix(&sender_position_id, 10).map_err(|e| format!("Invalid sender_position_id: {:?}", e))?;
+    let recipient = u32::from_str_radix(&recipient_position_id, 10)
+        .map_err(|e| format!("Invalid recipient_position_id: {:?}", e))?;
+    let position_id =
+        u32::from_str_radix(&sender_position_id, 10).map_err(|e| format!("Invalid sender_position_id: {:?}", e))?;
     let amount = u64::from_str_radix(&amount, 10).map_err(|e| format!("Invalid amount: {:?}", e))?;
     let expiration = u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
     let salt = Felt::from_dec_str(&salt).map_err(|e| format!("Invalid salt: {:?}", e))?;
-    let revision = u32::from_str_radix(&domain_revision, 10).map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
+    let revision =
+        u32::from_str_radix(&domain_revision, 10).map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
 
     let transfer_args = TransferArgs {
         recipient: PositionId { value: recipient },
@@ -168,7 +179,8 @@ pub fn get_withdrawal_hash(
     domain_chain_id: String,
     domain_revision: String,
 ) -> Result<Felt, String> {
-    let collateral_id = Felt::from_hex(&collateral_id_hex).map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
+    let collateral_id =
+        Felt::from_hex(&collateral_id_hex).map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
     let user_key = Felt::from_hex(&user_public_key_hex).map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
 
     let recipient = Felt::from_hex(&recipient_hex).map_err(|e| format!("Invalid recipient_hex: {:?}", e))?;
@@ -176,7 +188,8 @@ pub fn get_withdrawal_hash(
     let amount = u64::from_str_radix(&amount, 10).map_err(|e| format!("Invalid amount: {:?}", e))?;
     let expiration = u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
     let salt = Felt::from_dec_str(&salt).map_err(|e| format!("Invalid salt: {:?}", e))?;
-    let revision = u32::from_str_radix(&domain_revision, 10).map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
+    let revision =
+        u32::from_str_radix(&domain_revision, 10).map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
 
     let withdrawal_args = WithdrawalArgs {
         recipient,
@@ -211,7 +224,8 @@ mod tests {
             Ok(private_key) => {
                 assert_eq!(
                     private_key,
-                    Felt::from_dec_str("3554363360756768076148116215296798451844584215587910826843139626172125285444").unwrap()
+                    Felt::from_dec_str("3554363360756768076148116215296798451844584215587910826843139626172125285444")
+                        .unwrap()
                 );
             }
             Err(err) => {
@@ -310,13 +324,15 @@ mod tests {
 
     #[test]
     fn test_get_withdrawal_hash() {
-        let recipient_hex = Felt::from_dec_str("206642948138484946401984817000601902748248360221625950604253680558965863254")
-            .unwrap()
-            .to_hex_string();
+        let recipient_hex =
+            Felt::from_dec_str("206642948138484946401984817000601902748248360221625950604253680558965863254")
+                .unwrap()
+                .to_hex_string();
         let position_id = "2".to_string();
-        let collateral_id_hex = Felt::from_dec_str("1386727789535574059419576650469753513512158569780862144831829362722992755422")
-            .unwrap()
-            .to_hex_string();
+        let collateral_id_hex =
+            Felt::from_dec_str("1386727789535574059419576650469753513512158569780862144831829362722992755422")
+                .unwrap()
+                .to_hex_string();
         let amount = "1000".to_string();
         let expiration = "0".to_string();
         let salt = "0".to_string();
@@ -342,7 +358,8 @@ mod tests {
             Ok(hash) => {
                 assert_eq!(
                     hash,
-                    Felt::from_dec_str("2182119571682827544073774098906745929330860211691330979324731407862023927178").unwrap()
+                    Felt::from_dec_str("2182119571682827544073774098906745929330860211691330979324731407862023927178")
+                        .unwrap()
                 );
             }
             Err(err) => {

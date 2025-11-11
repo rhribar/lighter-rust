@@ -77,7 +77,9 @@ pub async fn init_extended_markets() -> Result<()> {
         map.insert(m.name, cfg);
     }
 
-    EXTENDED_MARKETS.set(map).map_err(|_| anyhow!("extended markets already initialised"))
+    EXTENDED_MARKETS
+        .set(map)
+        .map_err(|_| anyhow!("extended markets already initialised"))
 }
 
 /// Immutable handle to the loaded market map.
@@ -151,7 +153,10 @@ pub fn sign_limit_ioc(
     domain_revision: Option<String>,
 ) -> Result<Signature> {
     if qty_synthetic < cfg.min_qty_synthetic && !is_reduce_only {
-        return Err(anyhow!("qty below exchange minimum ({} synthetic)", cfg.min_qty_synthetic));
+        return Err(anyhow!(
+            "qty below exchange minimum ({} synthetic)",
+            cfg.min_qty_synthetic
+        ));
     }
     if qty_synthetic * limit_price > cfg.max_limit_value {
         return Err(anyhow!("order value exceeds exchange cap"));

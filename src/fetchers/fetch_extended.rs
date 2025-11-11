@@ -1,5 +1,7 @@
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
-use crate::{parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection};
+use crate::{
+    parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
+};
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -112,7 +114,8 @@ impl FetcherExtended {
             _ => return None,
         };
         Some(Position {
-            symbol: AssetMapping::map_ticker(ExchangeName::Extended, &pos.market, TickerDirection::ToCanonical).unwrap_or_else(|| pos.market.clone()),
+            symbol: AssetMapping::map_ticker(ExchangeName::Extended, &pos.market, TickerDirection::ToCanonical)
+                .unwrap_or_else(|| pos.market.clone()),
             side,
             size: parse_decimal(&pos.size).ok()?.abs(),
             entry_price: parse_decimal(&pos.entry_price).ok()?,
@@ -126,12 +129,19 @@ impl FetcherExtended {
 
 #[async_trait]
 impl Fetcher for FetcherExtended {
+    fn get_exchange_info(&self) -> ExchangeName {
+        ExchangeName::Extended
+    }
+
     async fn get_account_data(&self, _address: &str) -> PointsBotResult<AccountData> {
         let headers = self.get_auth_headers()?;
         let balance_response = self.client.get("/user/balance", Some(headers.clone())).await?;
         let balance_data: ExtendedResponse<ExtendedBalanceData> = self.client.parse_json(balance_response).await?;
         if balance_data.status != "OK" {
-            let error_msg = balance_data.error.map(|e| e.message).unwrap_or_else(|| "Unknown error".to_string());
+            let error_msg = balance_data
+                .error
+                .map(|e| e.message)
+                .unwrap_or_else(|| "Unknown error".to_string());
             return Err(PointsBotError::Exchange {
                 code: balance_data.status,
                 message: format!("Extended API error: {}", error_msg),
@@ -148,7 +158,8 @@ impl Fetcher for FetcherExtended {
         };
         let positions_response = self.client.get("/user/positions", Some(headers)).await?;
         let raw_positions_response = positions_response.text().await?;
-        let positions_data: ExtendedResponse<Vec<ExtendedPositionData>> = serde_json::from_str(&raw_positions_response)?;
+        let positions_data: ExtendedResponse<Vec<ExtendedPositionData>> =
+            serde_json::from_str(&raw_positions_response)?;
         let positions_vec = match positions_data.status.as_str() {
             "OK" => positions_data.data.unwrap_or_default(),
             _ => Vec::new(),
@@ -162,7 +173,10 @@ impl Fetcher for FetcherExtended {
             .map(|pos| pos.margin.parse::<Decimal>().unwrap_or(Decimal::ZERO))
             .sum::<Decimal>();
         let account_value = balance.equity.parse::<Decimal>().unwrap_or(Decimal::ZERO);
-        let available_balance = balance.available_for_withdrawal.parse::<Decimal>().unwrap_or(Decimal::ZERO);
+        let available_balance = balance
+            .available_for_withdrawal
+            .parse::<Decimal>()
+            .unwrap_or(Decimal::ZERO);
         let total_raw_usd = balance.balance.parse::<Decimal>().unwrap_or(Decimal::ZERO);
         let positions = positions_vec
             .into_iter()
@@ -187,7 +201,10 @@ impl Fetcher for FetcherExtended {
         let data: ExtendedResponse<Vec<ExtendedMarketData>> = self.client.parse_json(response).await?;
 
         if data.status != "OK" {
-            let error_msg = data.error.map(|e| e.message).unwrap_or_else(|| "Unknown error".to_string());
+            let error_msg = data
+                .error
+                .map(|e| e.message)
+                .unwrap_or_else(|| "Unknown error".to_string());
             return Err(PointsBotError::Exchange {
                 code: data.status,
                 message: format!("Extended API error: {}", error_msg),
@@ -198,14 +215,15 @@ impl Fetcher for FetcherExtended {
 
         let mut market_infos = Vec::new();
         for market in markets {
-            let symbol =
-                AssetMapping::map_ticker(ExchangeName::Extended, &market.name, TickerDirection::ToCanonical).unwrap_or_else(|| market.name.clone());
+            let symbol = AssetMapping::map_ticker(ExchangeName::Extended, &market.name, TickerDirection::ToCanonical)
+                .unwrap_or_else(|| market.name.clone());
 
             let funding_rate = Decimal::from_str(&market.market_stats.funding_rate)?;
             let bid_price = Decimal::from_str(&market.market_stats.bid_price)?;
             let ask_price = Decimal::from_str(&market.market_stats.ask_price)?;
 
             market_infos.push(MarketInfo {
+                exchange_id: None,
                 symbol: symbol.clone(),
                 base_asset: symbol,
                 quote_asset: "USD".to_string(),
@@ -214,6 +232,7 @@ impl Fetcher for FetcherExtended {
                 leverage: Decimal::from_str(&market.trading_config.max_leverage)?,
                 funding_rate,
                 sz_decimals: Decimal::from(market.asset_precision),
+                px_decimals: Decimal::ZERO,
                 min_order_size_change: Decimal::from_str(&market.trading_config.min_order_size_change)?,
             });
         }

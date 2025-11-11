@@ -30,7 +30,10 @@ impl HttpClient {
         if status.is_success() {
             Ok(response)
         } else {
-            let body = response.text().await.unwrap_or_else(|_| "<failed to read body>".to_string());
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read body>".to_string());
             Err(PointsBotError::Exchange {
                 code: status.as_str().to_string(),
                 message: format!("Server error: {} - {}", status, body),
@@ -38,9 +41,14 @@ impl HttpClient {
         }
     }
 
-    fn apply_headers(request: reqwest::RequestBuilder, headers: Option<&HashMap<String, String>>) -> reqwest::RequestBuilder {
+    fn apply_headers(
+        request: reqwest::RequestBuilder,
+        headers: Option<&HashMap<String, String>>,
+    ) -> reqwest::RequestBuilder {
         if let Some(headers) = headers {
-            headers.into_iter().fold(request, |req, (key, value)| req.header(key, value))
+            headers
+                .into_iter()
+                .fold(request, |req, (key, value)| req.header(key, value))
         } else {
             request
         }
@@ -54,7 +62,12 @@ impl HttpClient {
         self.handle_response(response).await
     }
 
-    pub async fn post(&self, endpoint: &str, body: &str, headers: Option<HashMap<String, String>>) -> PointsBotResult<Response> {
+    pub async fn post(
+        &self,
+        endpoint: &str,
+        body: &str,
+        headers: Option<HashMap<String, String>>,
+    ) -> PointsBotResult<Response> {
         self.rate_limit().await;
         let url = format!("{}{}", self.base_url, endpoint);
         let mut request = Self::apply_headers(self.client.post(&url), headers.as_ref());
@@ -65,7 +78,12 @@ impl HttpClient {
         self.handle_response(response).await
     }
 
-    pub async fn patch(&self, endpoint: &str, body: &str, headers: Option<HashMap<String, String>>) -> PointsBotResult<Response> {
+    pub async fn patch(
+        &self,
+        endpoint: &str,
+        body: &str,
+        headers: Option<HashMap<String, String>>,
+    ) -> PointsBotResult<Response> {
         self.rate_limit().await;
         let url = format!("{}{}", self.base_url, endpoint);
         let mut request = Self::apply_headers(self.client.patch(&url), headers.as_ref());

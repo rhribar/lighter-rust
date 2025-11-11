@@ -11,16 +11,36 @@ use tokio::time::{sleep, Duration};
 
 use ethers::signers::LocalWallet;
 use points_bot_rs::{
-    BotConfig, BotMode, ExchangeName, OperatorLighter, PointsBotResult, PositionSide, fetchers::{AccountData, Fetcher, FetcherExtended, FetcherHyperliquid, FetcherLighter, MarketInfo, Position}, operators::{Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType, create_operator_hyperliquid}
+    fetchers::{AccountData, Fetcher, FetcherExtended, FetcherHyperliquid, FetcherLighter, MarketInfo, Position},
+    operators::{create_operator_hyperliquid, Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType},
+    BotConfig, BotMode, ExchangeName, OperatorLighter, PointsBotResult, PositionSide,
 };
 use rust_decimal::RoundingStrategy;
+
+#[derive(Debug, Clone)]
+struct ArbitrageOpportunity {
+    symbol: String,
+    rate_a: Decimal,
+    rate_b: Decimal,
+    diff: Decimal,
+    leverage_a: Decimal,
+    leverage_b: Decimal,
+    price_crossed: bool,
+    bid_opportunity_price: Decimal,
+    ask_opportunity_price: Decimal,
+    market_a: MarketInfo,
+    market_b: MarketInfo,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
 
     let config = BotConfig::load_env().expect("Failed to load configuration");
-    info!("Starting Points Bot - Mode: {:?} | Wallet: {}", config.mode, config.wallet_address);
+    info!(
+        "Starting Points Bot - Mode: {:?} | Wallet: {}",
+        config.mode, config.wallet_address
+    );
 
     let private_key = config.private_key.as_deref().expect("Missing private_key in config");
     let wallet = LocalWallet::from_str(private_key).expect("Failed to create wallet from private key");
@@ -46,12 +66,16 @@ async fn main() -> Result<()> {
                 info!("Next trade scheduled at: {:?}", next);
 
                 sleep(duration).await;
+
+                /* let current_config = load_config_from_json("bots_config.json", &config.wallet_address)
+                    .unwrap_or(config.clone());
+ */
                 trade(
                     config.clone(),
                     fetcher_extended.as_ref(),
-                    fetcher_hyperliquid.as_ref(),
-                    operator_hyperliquid.as_ref(),
+                    fetcher_lighter.as_ref(),
                     operator_extended.as_ref(),
+                    operator_lighter.as_ref(),
                 )
                 .await;
             }
@@ -61,8 +85,8 @@ async fn main() -> Result<()> {
             config.clone(),
             fetcher_extended.as_ref(),
             fetcher_lighter.as_ref(),
-            operator_lighter.as_ref(),
             operator_extended.as_ref(),
+            operator_lighter.as_ref(),
         )
         .await;
         Ok(())
@@ -71,38 +95,36 @@ async fn main() -> Result<()> {
 
 async fn trade(
     config: BotConfig,
-    fetcher_extended: &dyn Fetcher,
-    fetcher_hyperliquid: &dyn Fetcher,
-    operator_hyperliquid: &dyn Operator,
-    operator_extended: &dyn Operator,
+    fetcher_a: &dyn Fetcher,
+    fetcher_b: &dyn Fetcher,
+    operator_a: &dyn Operator,
+    operator_b: &dyn Operator,
 ) {
-    let (hyperliquid_positions, extended_positions, _) = get_and_handle_account_data(fetcher_hyperliquid, fetcher_extended, &config).await;
+    let (positions_a, positions_b, _, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b, &config).await;
 
-    info!("Positions | Lighter: {:?}", hyperliquid_positions);
+    // business logic, decide if rebalance is needed
+    let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&markets_a, &markets_b).await;
+    let best_op = get_best_op(&arbitrage_opportunities).await;
 
-    let (hyperliquid_markets, extended_markets) = get_and_handle_markets(fetcher_hyperliquid, fetcher_extended).await;
+    let op = best_op.unwrap();
+    let symbol = &op.symbol;
+    let diff = op.diff;
 
-    info!("Markets | Lighter count: {}", hyperliquid_markets.len());
-
-    match create_order(operator_hyperliquid, "BTC", PositionSide::Short, &Decimal::from_f64(0.0002).unwrap(), &Decimal::from_f64(1030000.00).unwrap(), Some(false)).await {
-        Ok(order_result) => info!("Short order: {:?}", order_result),
-        Err(e) => error!("Short order failed: {:?}", e),
-    }
-
-    /*let (arbitrage_opportunities, best_price_crossed_opportunity) = get_and_handle_opportunities(&hyperliquid_markets, &extended_markets).await;
-
-    let (symbol, _, _, diff, ..) = best_price_crossed_opportunity.unwrap();
-
-    let prev_symbol = extended_positions.first().map(|p| &p.symbol);
+    let prev_symbol = positions_a.first().map(|p| &p.symbol);
     let prev_best_diff = prev_symbol
-        .and_then(|s| arbitrage_opportunities.iter().find(|op| &op.0 == s).map(|op| op.3))
+        .and_then(|s| {
+            arbitrage_opportunities
+                .iter()
+                .find(|op| &op.symbol == s)
+                .map(|op| op.diff)
+        })
         .unwrap_or(Decimal::ZERO);
 
-    let is_better = diff > prev_best_diff * Decimal::from_f32(1.33).unwrap();
-    let is_same_symbol = prev_symbol.map_or(false, |s| symbol == *s);
+    let is_better = diff > prev_best_diff * Decimal::from_f32(1.11).unwrap();
+    let is_same_symbol = prev_symbol.map_or(false, |s| symbol == s);
 
     info!(
-        "Decision Making | Prev op symbol: {:?} | Prev op current funding diff: {:?}% | Next op symbol: {:?} | Next op funding diff: {:?}% | Already Holding Same Asset: {} | Is Better (33% threshold): {}",
+        "Decision Making: Prev op symbol: {:?}, Prev op current funding diff: {:?}%, Next op symbol: {:?}, Next op funding diff: {:?}%, Already Holding Same Asset: {}, Is Better (33% threshold): {}",
         prev_symbol,
         prev_best_diff * Decimal::from(24 * 365 * 100),
         symbol,
@@ -111,276 +133,294 @@ async fn trade(
         is_better
     );
 
-    let is_first_time = extended_positions.is_empty() && hyperliquid_positions.is_empty();
+    let is_first_time = positions_a.is_empty() && positions_b.is_empty();
     let change_position = !is_first_time && !is_same_symbol && is_better;
 
     info!(
         "Trade Execution | Is First Time: {} | Change Position: {}",
         is_first_time, change_position
-    ); */
+    );
 
-    /* if change_position {
-        if let Err(e) = close_all_open_positions(
-            &hyperliquid_positions,
-            &extended_positions,
-            &hyperliquid_markets,
-            &extended_markets,
-            operator_hyperliquid,
-            operator_extended,
-        )
-        .await
-        {
-            error!("Failed to close positions: {:?}", e);
-        }
-        info!("Sleeping for 20 minutes to allow orders to fill and close");
-        info!("Next trade scheduled at: {:?}", Utc::now() + Duration::from_secs(20 * 60));
+    if change_position {
+        close_positions_for_market(&positions_a, &markets_a, operator_a)
+            .await
+            .unwrap_or_else(|e| {
+                error!("Failed to close positions: {:?}", e);
+            });
 
-        if config.mode == BotMode::Production {
-            sleep(Duration::from_secs(20 * 60)).await;
+        close_positions_for_market(&positions_b, &markets_b, operator_b)
+            .await
+            .unwrap_or_else(|e| {
+                error!("Failed to close positions: {:?}", e);
+            });
+
+        let sleep_time = if config.mode == BotMode::Production {
+            5 * 60
         } else {
-            sleep(Duration::from_secs(5 * 60)).await;
-        }
-    } */
+            5 * 60
+        };
 
-    /* if is_first_time || change_position {
-        let (_, _, min_available_balance) = get_and_handle_account_data(fetcher_hyperliquid, fetcher_extended, &config).await;
+        info!("Sleeping for {} seconds to allow orders to fill and close", sleep_time);
+        info!(
+            "Next trade scheduled at: {:?}",
+            Utc::now() + Duration::from_secs(sleep_time)
+        );
 
-        let (hyperliquid_markets, extended_markets) = get_and_handle_markets(fetcher_hyperliquid, fetcher_extended).await;
+        sleep(Duration::from_secs(sleep_time)).await;
+    }
 
-        let (_, best_price_crossed_opportunity) = get_and_handle_opportunities(&hyperliquid_markets, &extended_markets).await;
+    if is_first_time || change_position {
+        let (_, _, min_available_balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b, &config).await;
 
-        if let Some((symbol, hyper_rate, ext_rate, _, _, _, _, bid_opportunity_price, ask_opportunity_price)) = best_price_crossed_opportunity {
-            // TODO: here not really needed to use from markets since you can pass markets in arb opportunities directly
-            let hyper_market = hyperliquid_markets.iter().find(|m| m.symbol == *symbol).unwrap();
-            let ext_market = extended_markets.iter().find(|m| m.symbol == *symbol).unwrap();
-            info!("Markets for arbitrage | Hyperliquid: {:?} | Extended: {:?}", hyper_market, ext_market);
+        let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&markets_a, &markets_b).await;
+        let best_op = get_best_op(&arbitrage_opportunities).await;
+
+        if let Some(ArbitrageOpportunity {
+            symbol: _,
+            rate_a,
+            rate_b,
+            diff: _,
+            leverage_a: _,
+            leverage_b: _,
+            price_crossed: _,
+            bid_opportunity_price,
+            ask_opportunity_price,
+            market_a,
+            market_b,
+        }) = best_op
+        {
+            info!(
+                "Markets for arbitrage | Market {}: {:?} | Market {}: {:?}",
+                operator_a.get_exchange_info(),
+                market_a,
+                operator_b.get_exchange_info(),
+                market_b
+            );
 
             let (amount, long_market, short_market, long_operator, short_operator) = calculate_trade_attributes(
-                hyper_rate,
-                ext_rate,
-                hyper_market,
-                ext_market,
-                operator_hyperliquid,
-                operator_extended,
+                rate_a,
+                rate_b,
+                &market_a,
+                &market_b,
+                operator_a,
+                operator_b,
                 min_available_balance.unwrap(),
             );
 
-            if let Err(e) = set_same_leverage(symbol.to_string(), hyper_market, ext_market, operator_hyperliquid, operator_extended).await {
+            if let Err(e) = set_same_leverage(&market_a, &market_b, operator_a, operator_b).await {
                 error!("Failed to set leverage: {:?}", e);
             }
 
-            let (price_adjusted_long, _) = get_adjusted_price_and_side(long_market, &PositionSide::Long, false, long_operator).await;
-            let (price_adjusted_short, _) = get_adjusted_price_and_side(short_market, &PositionSide::Short, false, short_operator).await;
+            let (price_adjusted_long, _) =
+                get_adjusted_price_and_side(long_market, &PositionSide::Long, false, long_operator).await;
+            let (price_adjusted_short, _) =
+                get_adjusted_price_and_side(short_market, &PositionSide::Short, false, short_operator).await;
             info!(
                 "Amount: {}, Price Adjusted Short: {} Price Adjusted Long: {}, Bid Opportunity Price: {}, Ask Opportunity Price: {}",
                 amount, price_adjusted_short, price_adjusted_long, bid_opportunity_price, ask_opportunity_price
             );
 
-            match create_order(short_operator, &symbol, PositionSide::Short, &amount, &price_adjusted_short, Some(false)).await {
+            match create_order(
+                short_operator,
+                &short_market,
+                PositionSide::Short,
+                &amount,
+                &price_adjusted_short,
+                Some(false),
+            )
+            .await
+            {
                 Ok(order_result) => info!("Short order: {:?}", order_result),
                 Err(e) => error!("Short order failed: {:?}", e),
             }
-            match create_order(long_operator, &symbol, PositionSide::Long, &amount, &price_adjusted_long, Some(false)).await {
+
+            match create_order(
+                long_operator,
+                &long_market,
+                PositionSide::Long,
+                &amount,
+                &price_adjusted_long,
+                Some(false),
+            )
+            .await
+            {
                 Ok(order_result) => info!("Long order: {:?}", order_result),
                 Err(e) => error!("Long order failed: {:?}", e),
             }
         } else {
             error!("No arbitrage opportunities available.");
         }
-    } */
+    }
 }
 
-async fn get_and_handle_account_data(
-    fetcher_hyperliquid: &dyn Fetcher,
-    fetcher_extended: &dyn Fetcher,
+async fn get_trading_data(
+    fetcher_a: &dyn Fetcher,
+    fetcher_b: &dyn Fetcher,
     config: &BotConfig,
-) -> (Vec<Position>, Vec<Position>, Option<Decimal>) {
-    let (hyperliquid_account, extended_account) = get_all_account_data(fetcher_hyperliquid, fetcher_extended, &config.wallet_address).await;
+) -> (
+    Vec<Position>,
+    Vec<Position>,
+    Option<Decimal>,
+    Vec<MarketInfo>,
+    Vec<MarketInfo>,
+) {
+    let account_a = get_account_data(fetcher_a, &config).await;
+    let account_b = get_account_data(fetcher_b, &config).await;
 
-    let hyperliquid_positions = hyperliquid_account.as_ref().map_or(vec![], |a| a.positions.clone());
-    let extended_positions = extended_account.as_ref().map_or(vec![], |a| a.positions.clone());
-    info!(
-        "Positions | Hyperliquid: {:?} | Extended: {:?}",
-        hyperliquid_positions, extended_positions
-    );
+    let positions_a = get_positions(&account_a);
+    let positions_b = get_positions(&account_b);
 
-    let min_available_balance = if let (Some(hyper), Some(ext)) = (&hyperliquid_account, &extended_account) {
-        Some(hyper.available_balance.min(ext.available_balance))
-    } else {
-        None
+    let min_available_balance = match (&account_a, &account_b) {
+        (Some(a), Some(b)) => Some(a.available_balance.min(b.available_balance)),
+        _ => None,
     };
 
-    info!("Balance to trade min([...exchanges]): {:?}", min_available_balance);
+    info!("Maximum balance to trade across exchanges: {:?}", min_available_balance);
 
-    (hyperliquid_positions, extended_positions, min_available_balance)
+    let markets_a = get_markets(fetcher_a).await;
+    let markets_b = get_markets(fetcher_b).await;
+
+    (positions_a, positions_b, min_available_balance, markets_a, markets_b)
 }
 
-async fn get_and_handle_markets(fetcher_hyperliquid: &dyn Fetcher, fetcher_extended: &dyn Fetcher) -> (Vec<MarketInfo>, Vec<MarketInfo>) {
-    let (hyperliquid_markets, extended_markets) = get_all_markets(fetcher_hyperliquid, fetcher_extended).await;
-
-    // handle empty markets
-    let hyperliquid_markets: Vec<MarketInfo> = hyperliquid_markets
-        .into_iter()
-        .filter(|m| !m.bid_price.is_zero() && !m.ask_price.is_zero())
-        .collect();
-    let extended_markets: Vec<MarketInfo> = extended_markets
-        .into_iter()
-        .filter(|m| !m.bid_price.is_zero() && !m.ask_price.is_zero())
-        .collect();
-    info!(
-        "First Markets | Hyperliquid: {:?} | Extended: {:?}",
-        hyperliquid_markets.first(),
-        extended_markets.first()
-    );
-
-    (hyperliquid_markets, extended_markets)
-}
-
-async fn get_and_handle_opportunities(
-    hyperliquid_markets: &Vec<MarketInfo>,
-    extended_markets: &Vec<MarketInfo>,
-) -> (
-    Vec<(String, Decimal, Decimal, Decimal, Decimal, Decimal, bool, Decimal, Decimal)>,
-    Option<(String, Decimal, Decimal, Decimal, Decimal, Decimal, bool, Decimal, Decimal)>,
-) {
-    let exclude_tickers = vec!["MEGA", "MON"];
-
-    let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(hyperliquid_markets, extended_markets)
+async fn get_account_data(fetcher: &dyn Fetcher, config: &BotConfig) -> Option<AccountData> {
+    fetcher
+        .get_account_data(&config.wallet_address)
         .await
+        .map(Some)
+        .unwrap_or_else(|e| {
+            error!("Failed to get A account: {:?}", e);
+            None
+        })
+}
+
+fn get_positions(account: &Option<AccountData>) -> Vec<Position> {
+    account.as_ref().map_or(vec![], |a| a.positions.clone())
+}
+
+async fn get_markets(fetcher: &dyn Fetcher) -> Vec<MarketInfo> {
+    let markets = fetcher.get_markets().await.unwrap_or_else(|e| {
+        error!("Failed to fetch {} markets: {:?}", fetcher.get_exchange_info(), e);
+        vec![]
+    });
+
+    let markets: Vec<MarketInfo> = markets
         .into_iter()
-        .filter(|op| !exclude_tickers.contains(&op.0.as_str()))
-        .collect::<Vec<_>>();
+        .filter(|m| !m.bid_price.is_zero() && !m.ask_price.is_zero())
+        .collect();
 
-    info!("Arbitrage Opportunities: {:?}", arbitrage_opportunities);
+    info!("First Market on {}: {:?}", fetcher.get_exchange_info(), markets.first());
 
-    if let Some((symbol, hyper_rate, ext_rate, diff, hyper_leverage, ext_leverage, price_crossed, bid_opportunity_price, ask_opportunity_price)) =
-        arbitrage_opportunities.first()
-    {
+    markets
+}
+
+async fn get_best_op(arb_ops: &[ArbitrageOpportunity]) -> Option<ArbitrageOpportunity> {
+    if let Some(op) = arb_ops.first() {
         info!(
-            "Best funding op: Symbol: {}, Hyperliquid Rate: {}, Extended Rate: {}, Difference: {}, Hyper Leverage: {}, Extended Leverage: {}, Price Crossed: {} Bid Opportunity Price: {}, Ask Opportunity Price: {}",
-            symbol,
-            hyper_rate,
-            ext_rate,
-            diff * Decimal::from(24 * 365 * 100),
-            hyper_leverage,
-            ext_leverage,
-            price_crossed,
-            bid_opportunity_price,
-            ask_opportunity_price
+            "Best funding op: Symbol: {}, Market A Rate: {}, Market B Rate: {}, Difference: {}, Market A Leverage: {}, Market B Leverage: {}, Price Crossed: {} Bid Opportunity Price: {}, Ask Opportunity Price: {}",
+            op.symbol,
+            op.rate_a,
+            op.rate_b,
+            op.diff * Decimal::from(24 * 365 * 100),
+            op.leverage_a,
+            op.leverage_b,
+            op.price_crossed,
+            op.bid_opportunity_price,
+            op.ask_opportunity_price
         );
     }
 
-    let best_price_crossed_opportunity = arbitrage_opportunities.iter().find(|op| op.6).cloned();
+    let best_price_crossed_opportunity = arb_ops.iter().find(|op| op.price_crossed).cloned();
 
-    if let Some((symbol, hyper_rate, ext_rate, diff, hyper_leverage, ext_leverage, price_crossed, bid_opportunity_price, ask_opportunity_price)) =
-        best_price_crossed_opportunity.clone()
-    {
+    if let Some(op) = best_price_crossed_opportunity.clone() {
         info!(
-            "Best price crossed op: Symbol: {}, Hyperliquid Rate: {}, Extended Rate: {}, Difference: {}, Hyper Leverage: {}, Extended Leverage: {}, Price Crossed: {} Bid Opportunity Price: {}, Ask Opportunity Price: {}",
-            symbol,
-            hyper_rate,
-            ext_rate,
-            diff * Decimal::from(24 * 365 * 100),
-            hyper_leverage,
-            ext_leverage,
-            price_crossed,
-            bid_opportunity_price,
-            ask_opportunity_price
+            "Best price crossed op: Symbol: {}, Market A Rate: {}, Market B Rate: {}, Difference: {}, Market A Leverage: {}, Market B Leverage: {}, Price Crossed: {} Bid Opportunity Price: {}, Ask Opportunity Price: {}",
+            op.symbol,
+            op.rate_a,
+            op.rate_b,
+            op.diff * Decimal::from(24 * 365 * 100),
+            op.leverage_a,
+            op.leverage_b,
+            op.price_crossed,
+            op.bid_opportunity_price,
+            op.ask_opportunity_price
         );
     }
 
-    (arbitrage_opportunities, best_price_crossed_opportunity)
-}
-
-async fn get_all_account_data(
-    fetcher_hyperliquid: &dyn Fetcher,
-    fetcher_extended: &dyn Fetcher,
-    wallet_address: &str,
-) -> (Option<AccountData>, Option<AccountData>) {
-    let hyperliquid_account = fetcher_hyperliquid.get_account_data(wallet_address).await.map(Some).unwrap_or_else(|e| {
-        error!("Failed to get Hyperliquid account: {:?}", e);
-        None
-    });
-
-    let extended_account = fetcher_extended.get_account_data(wallet_address).await.map(Some).unwrap_or_else(|e| {
-        error!("Failed to get Extended account: {:?}", e);
-        None
-    });
-
-    (hyperliquid_account, extended_account)
-}
-
-async fn get_all_markets(fetcher_hyperliquid: &dyn Fetcher, fetcher_extended: &dyn Fetcher) -> (Vec<MarketInfo>, Vec<MarketInfo>) {
-    let hyperliquid_markets = fetcher_hyperliquid.get_markets().await.unwrap_or_else(|e| {
-        error!("Failed to fetch Hyperliquid markets: {:?}", e);
-        vec![]
-    });
-
-    let extended_markets = fetcher_extended.get_markets().await.unwrap_or_else(|e| {
-        error!("Failed to fetch Extended markets: {:?}", e);
-        vec![]
-    });
-
-    (hyperliquid_markets, extended_markets)
+    best_price_crossed_opportunity
 }
 
 async fn get_arbitrage_opportunities_from_markets(
-    hyperliquid_markets: &[MarketInfo],
-    extended_markets: &[MarketInfo],
-) -> Vec<(String, Decimal, Decimal, Decimal, Decimal, Decimal, bool, Decimal, Decimal)> {
+    markets_a: &[MarketInfo],
+    markets_b: &[MarketInfo],
+) -> Vec<ArbitrageOpportunity> {
     let mut arbitrage_opportunities = Vec::new();
 
-    for hyper_market in hyperliquid_markets {
-        if let Some(ext_market) = extended_markets.iter().find(|r| r.symbol == hyper_market.symbol) {
-            let diff = (hyper_market.funding_rate - ext_market.funding_rate).abs();
+    for market_a in markets_a {
+        if let Some(market_b) = markets_b.iter().find(|r| r.symbol == market_a.symbol) {
+            let diff = (market_a.funding_rate - market_b.funding_rate).abs();
 
             // op specific things
-            let (price_crossed, (bid_opportunity_price, ask_opportunity_price)) = if hyper_market.funding_rate > ext_market.funding_rate {
-                (
-                    hyper_market.ask_price > ext_market.bid_price,
-                    (ext_market.bid_price, hyper_market.ask_price),
-                )
-            } else {
-                (
-                    ext_market.ask_price > hyper_market.bid_price,
-                    (hyper_market.bid_price, ext_market.ask_price),
-                )
-            };
+            let (price_crossed, (bid_opportunity_price, ask_opportunity_price)) =
+                if market_a.funding_rate > market_b.funding_rate {
+                    (
+                        market_a.ask_price > market_b.bid_price,
+                        (market_b.bid_price, market_a.ask_price),
+                    )
+                } else {
+                    (
+                        market_b.ask_price > market_a.bid_price,
+                        (market_a.bid_price, market_b.ask_price),
+                    )
+                };
 
-            arbitrage_opportunities.push((
-                hyper_market.symbol.clone(),
-                hyper_market.funding_rate,
-                ext_market.funding_rate,
+            arbitrage_opportunities.push(ArbitrageOpportunity {
+                symbol: market_a.symbol.clone(),
+                rate_a: market_a.funding_rate,
+                rate_b: market_b.funding_rate,
                 diff,
-                hyper_market.leverage,
-                ext_market.leverage,
+                leverage_a: market_a.leverage,
+                leverage_b: market_b.leverage,
                 price_crossed,
                 bid_opportunity_price,
                 ask_opportunity_price,
-            ));
+                market_a: market_a.clone(),
+                market_b: market_b.clone(),
+            });
         }
     }
 
-    arbitrage_opportunities.sort_by(|a, b| b.3.cmp(&a.3));
+    arbitrage_opportunities.sort_by(|a, b| b.diff.cmp(&a.diff));
 
     info!("Found {} arbitrage opportunities", arbitrage_opportunities.len());
 
+    let exclude_tickers = vec!["MEGA", "MON"];
+
     arbitrage_opportunities
+        .into_iter()
+        .filter(|op| !exclude_tickers.contains(&op.symbol.as_str()))
+        .collect::<Vec<_>>()
 }
 
 fn calculate_trade_attributes<'a>(
-    hyper_rate: Decimal,
-    ext_rate: Decimal,
-    hyper_market: &'a MarketInfo,
-    ext_market: &'a MarketInfo,
-    operator_hyperliquid: &'a dyn Operator,
-    operator_extended: &'a dyn Operator,
+    rate_a: Decimal,
+    rate_b: Decimal,
+    market_a: &'a MarketInfo,
+    market_b: &'a MarketInfo,
+    operator_a: &'a dyn Operator,
+    operator_b: &'a dyn Operator,
     min_available_balance: Decimal,
-) -> (Decimal, &'a MarketInfo, &'a MarketInfo, &'a dyn Operator, &'a dyn Operator) {
-    let (long_market, short_market, long_operator, short_operator) = if hyper_rate < ext_rate {
-        (hyper_market, ext_market, operator_hyperliquid, operator_extended)
+) -> (
+    Decimal,
+    &'a MarketInfo,
+    &'a MarketInfo,
+    &'a dyn Operator,
+    &'a dyn Operator,
+) {
+    let (long_market, short_market, long_operator, short_operator) = if rate_a < rate_b {
+        (market_a, market_b, operator_a, operator_b)
     } else {
-        (ext_market, hyper_market, operator_extended, operator_hyperliquid)
+        (market_b, market_a, operator_b, operator_a)
     };
 
     let leverage = long_market.leverage.min(short_market.leverage);
@@ -404,68 +444,101 @@ fn calculate_trade_attributes<'a>(
     let max_amount = max_amount_long.min(max_amount_short);
     let amount = max_amount.round_dp_with_strategy(sz_decimals.to_u32().unwrap_or(0), RoundingStrategy::ToZero);
 
-    let size_increment = long_market.min_order_size_change.max(short_market.min_order_size_change);
+    let size_increment = long_market
+        .min_order_size_change
+        .max(short_market.min_order_size_change);
     let size_increment_dp = size_increment.normalize().scale();
 
     // Direct quantization: compute max increments that fit in amount
     let increments = (amount / size_increment).to_u128().unwrap_or(0);
-    let quantized_amount = (Decimal::from_u128(increments).unwrap_or(Decimal::ZERO) * size_increment).round_dp(size_increment_dp);
+    let quantized_amount =
+        (Decimal::from_u128(increments).unwrap_or(Decimal::ZERO) * size_increment).round_dp(size_increment_dp);
 
-    info!("Max Amount {} | Amount: {} Quantized: {}", max_amount, amount, quantized_amount);
+    info!(
+        "Max Amount {} | Amount: {} Quantized: {}",
+        max_amount, amount, quantized_amount
+    );
 
-    (quantized_amount, long_market, short_market, long_operator, short_operator)
+    (
+        quantized_amount,
+        long_market,
+        short_market,
+        long_operator,
+        short_operator,
+    )
 }
 
 async fn set_same_leverage(
-    symbol: String,
-    hyper_market: &MarketInfo,
-    ext_market: &MarketInfo,
-    operator_hyperliquid: &dyn Operator,
-    operator_extended: &dyn Operator,
+    market_a: &MarketInfo,
+    market_b: &MarketInfo,
+    operator_a: &dyn Operator,
+    operator_b: &dyn Operator,
 ) -> PointsBotResult<()> {
-    let min_leverage = hyper_market.leverage.min(ext_market.leverage);
+    let min_leverage = market_a.leverage.min(market_b.leverage);
 
-    if hyper_market.leverage > min_leverage {
-        operator_hyperliquid.change_leverage(symbol, min_leverage).await.map_err(|e| e)
+    if market_a.leverage > min_leverage {
+        operator_a
+            .change_leverage(market_a.clone(), min_leverage)
+            .await
+            .map_err(|e| e)
     } else {
-        operator_extended.change_leverage(symbol, min_leverage).await.map_err(|e| e)
+        operator_b
+            .change_leverage(market_b.clone(), min_leverage)
+            .await
+            .map_err(|e| e)
     }
 }
 
-async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, close: bool, operator: &dyn Operator) -> (Decimal, PositionSide) {
-    // Dynamically adjust bips_offset based on operator type
-    let bips_offset = match operator.get_exchange_info() {
+async fn get_adjusted_price_and_side(
+    market: &MarketInfo,
+    side: &PositionSide,
+    close: bool,
+    operator: &dyn Operator,
+) -> (Decimal, PositionSide) {
+    let entry_offset = match operator.get_exchange_info() {
         ExchangeName::Hyperliquid => Decimal::from_f64(0.0).unwrap(),
         ExchangeName::Extended => Decimal::from_f64(0.0).unwrap(),
-        _ => Decimal::from_f64(0.00015).unwrap(),
+        ExchangeName::Lighter => Decimal::from_f64(0.0).unwrap()
     };
 
-    //     ExchangeName::Hyperliquid => Decimal::from_f64(if *side == PositionSide::Long { 0.0 } else { -0.001 }).unwrap(),
+    /* let exit_offset = match operator.get_exchange_info() {
+        ExchangeName::Hyperliquid => Decimal::from_f64(0.0).unwrap(),
+        ExchangeName::Extended => Decimal::from_f64(0.0).unwrap(),
+        ExchangeName::Lighter => Decimal::from_f64(0.0).unwrap()
+    }; */
 
     let scale_ask = market.ask_price.scale();
     let scale_bid = market.bid_price.scale();
 
-    let cross_book_offset_for_closing = Decimal::from_f64(0.00050).unwrap();
+    let exit_offset = Decimal::from_f64(0.0005).unwrap();
 
     match side {
         PositionSide::Long => {
             if close {
                 (
-                    (market.bid_price * (Decimal::ONE + bips_offset - cross_book_offset_for_closing)).round_dp(scale_ask),
+                    (market.bid_price * (Decimal::ONE + exit_offset))
+                        .round_dp(scale_ask),
                     PositionSide::Short,
                 )
             } else {
-                ((market.ask_price * (Decimal::ONE - bips_offset)).round_dp(scale_ask), PositionSide::Long)
+                (
+                    (market.ask_price * (Decimal::ONE - entry_offset)).round_dp(scale_ask),
+                    PositionSide::Long,
+                )
             }
         }
         PositionSide::Short => {
             if close {
                 (
-                    (market.ask_price * (Decimal::ONE - bips_offset + cross_book_offset_for_closing)).round_dp(scale_bid),
+                    (market.ask_price * (Decimal::ONE - exit_offset))
+                        .round_dp(scale_bid),
                     PositionSide::Long,
                 )
             } else {
-                ((market.bid_price * (Decimal::ONE + bips_offset)).round_dp(scale_bid), PositionSide::Short)
+                (
+                    (market.bid_price * (Decimal::ONE + entry_offset)).round_dp(scale_bid),
+                    PositionSide::Short,
+                )
             }
         }
     }
@@ -473,7 +546,7 @@ async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, c
 
 async fn create_order(
     operator: &dyn Operator,
-    symbol: &str,
+    market: &MarketInfo,
     side: PositionSide,
     quantity: &Decimal,
     price: &Decimal,
@@ -481,7 +554,7 @@ async fn create_order(
 ) -> PointsBotResult<OrderResponse> {
     let order_request = OrderRequest {
         id: uuid::Uuid::new_v4().to_string(),
-        symbol: symbol.to_string(),
+        market: market.clone(),
         side,
         order_type: OrderType::Limit,
         quantity: *quantity,
@@ -491,46 +564,54 @@ async fn create_order(
         reduce_only,
     };
 
-    info!("Exchange: {:?} | Creating order: {:?}", operator.get_exchange_info(), order_request);
+    info!(
+        "Exchange: {:?} | Creating order: {:?}",
+        operator.get_exchange_info(),
+        order_request
+    );
 
     let result = operator.create_order(order_request).await?;
 
     Ok(result)
 }
 
-async fn close_all_open_positions(
-    hyperliquid_positions: &[Position],
-    extended_positions: &[Position],
-    hyperliquid_markets: &[MarketInfo],
-    extended_markets: &[MarketInfo],
-    operator_hyperliquid: &dyn Operator,
-    operator_extended: &dyn Operator,
+async fn close_positions_for_market(
+    positions: &[Position],
+    markets: &[MarketInfo],
+    operator: &dyn Operator,
 ) -> anyhow::Result<()> {
-    if hyperliquid_positions.is_empty() && extended_positions.is_empty() {
-        info!("No positions available to close.");
+    let label = operator.get_exchange_info();
+
+    if positions.is_empty() {
+        info!("No positions to close on {}", label);
         return Ok(());
+    } else {
+        info!("Closing {} positions on {}", positions.len(), label);
     }
-    info!("Closing existing positions...");
 
-    for (positions, markets, operator, label) in [
-        (hyperliquid_positions, hyperliquid_markets, operator_hyperliquid, "Hyperliquid"),
-        (extended_positions, extended_markets, operator_extended, "Extended"),
-    ] {
-        for position in positions {
-            if let Some(market) = markets.iter().find(|m| m.symbol == position.symbol) {
-                let (price_adjusted, side) = get_adjusted_price_and_side(market, &position.side, true, operator).await;
+    for position in positions {
+        let Some(market) = markets.iter().find(|m| m.symbol == position.symbol) else {
+            error!("Market data missing for {} on {}", position.symbol, label);
+            continue;
+        };
 
-                info!(
-                    "Closing {label} position: {} with adjusted price: {} {:?} Original ask price: {} Original bid price: {}",
-                    position.symbol, price_adjusted, side, market.ask_price, market.bid_price
-                );
-                if let Err(e) = create_order(operator, &position.symbol, side, &position.size.abs(), &price_adjusted, Some(true)).await {
-                    error!("Failed to close {label} position: {:?}", e);
-                }
-            } else {
-                error!("Market data not found for symbol: {}", position.symbol);
-            }
+        let (price_adjusted, side) = get_adjusted_price_and_side(market, &position.side, true, operator).await;
+
+        if let Err(e) = create_order(
+            operator,
+            market,
+            side,
+            &position.size.abs(),
+            &price_adjusted,
+            Some(true),
+        )
+        .await
+        {
+            error!("Failed to close {} on {}: {:?}", position.symbol, label, e);
+        } else {
+            info!("Closed {} position on {}", position.symbol, label);
         }
     }
+
     Ok(())
 }

@@ -1,11 +1,13 @@
 use std::str::FromStr;
 
 use crate::{
+    fetchers::MarketInfo,
     operators::{
         init_extended_markets::{extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc, Side},
         Operator, OrderRequest, OrderResponse,
     },
-    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
+    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide,
+    TickerDirection,
 };
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -22,7 +24,10 @@ pub struct OperatorExtended {
 impl OperatorExtended {
     pub async fn new() -> Self {
         let _ = init_extended_markets().await;
-        let client = crate::operators::base::HttpClient::new("https://api.starknet.extended.exchange/api/v1".to_string(), Some(1000));
+        let client = crate::operators::base::HttpClient::new(
+            "https://api.starknet.extended.exchange/api/v1".to_string(),
+            Some(1000),
+        );
         Self {
             client,
             api_key: std::env::var("EXTENDED_API_KEY").ok(),
@@ -49,12 +54,18 @@ impl Operator for OperatorExtended {
                 source: None,
             });
         }
-        let _ = init_extended_markets();
-        order.symbol =
-            AssetMapping::map_ticker(ExchangeName::Extended, &order.symbol, TickerDirection::ToExchange).unwrap_or_else(|| order.symbol.clone());
-        let market_config = extended_markets().get(&order.symbol).ok_or_else(|| PointsBotError::InvalidParameter {
-            msg: format!("Market {} not found", order.symbol),
-        })?;
+        order.market.symbol = AssetMapping::map_ticker(
+            ExchangeName::Extended,
+            &order.market.symbol,
+            TickerDirection::ToExchange,
+        )
+        .unwrap_or_else(|| order.market.symbol.clone());
+        let market_config =
+            extended_markets()
+                .get(&order.market.symbol)
+                .ok_or_else(|| PointsBotError::InvalidParameter {
+                    msg: format!("Market {} not found", order.market.symbol),
+                })?;
 
         let side = match order.side {
             PositionSide::Long => Side::Buy,
@@ -105,7 +116,7 @@ impl Operator for OperatorExtended {
 
         let order_payload = json!({
             "id": order.id.to_string(),
-            "market": order.symbol,
+            "market": order.market.symbol,
             "type": order.order_type.as_str().to_uppercase(),
             "side": side.as_str().to_uppercase(),
             "qty": qty_synthetic.to_string(),
@@ -131,22 +142,26 @@ impl Operator for OperatorExtended {
         headers.insert("User-Agent".to_string(), "bot-rs/1.0".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
 
-        let response = self.client.post("/user/order", &order_payload.to_string(), Some(headers)).await;
+        let response = self
+            .client
+            .post("/user/order", &order_payload.to_string(), Some(headers))
+            .await;
         match response {
             Ok(resp) => {
                 let response_text = resp.text().await.map_err(|e| PointsBotError::Unknown {
                     msg: format!("Response error: {e}"),
                     source: Some(Box::new(e)),
                 })?;
-                let json_response: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| PointsBotError::Parse {
-                    msg: format!("Failed to parse JSON: {e}"),
-                    source: Some(Box::new(e)),
-                })?;
+                let json_response: serde_json::Value =
+                    serde_json::from_str(&response_text).map_err(|e| PointsBotError::Parse {
+                        msg: format!("Failed to parse JSON: {e}"),
+                        source: Some(Box::new(e)),
+                    })?;
                 if json_response["status"] == "OK" {
                     return Ok(OrderResponse {
                         id: order.id,
                         exchange_id: json_response["id"].as_str().unwrap_or_default().to_string(),
-                        symbol: order.symbol.clone(),
+                        symbol: order.market.symbol.clone(),
                         side: order.side.clone(),
                         status: OrderStatus::Resting,
                         filled_quantity: Decimal::ZERO,
@@ -164,13 +179,14 @@ impl Operator for OperatorExtended {
         }
     }
 
-    async fn change_leverage(&self, symbol: String, leverage: Decimal) -> PointsBotResult<()> {
+    async fn change_leverage(&self, market: MarketInfo, leverage: Decimal) -> PointsBotResult<()> {
         let api_key = self.api_key.as_ref().ok_or_else(|| PointsBotError::Auth {
             msg: "EXTENDED_API_KEY not set".to_string(),
             source: None,
         })?;
         let body = serde_json::to_string(&ChangeLeverageRequest {
-            market: AssetMapping::map_ticker(ExchangeName::Extended, &symbol, TickerDirection::ToExchange).unwrap_or(symbol),
+            market: AssetMapping::map_ticker(ExchangeName::Extended, &market.symbol, TickerDirection::ToExchange)
+                .unwrap_or(market.symbol),
             leverage: leverage.to_string(),
         })
         .map_err(|e| PointsBotError::Parse {

@@ -1,4 +1,4 @@
-max_width = 150               # Limit line length strictly to 100 characters
+max_width = 120               # Limit line length strictly to 100 characters
 hard_tabs = false             # Use spaces for indentation
 tab_spaces = 4                # Four spaces per indent level
 reorder_imports = true        # Sort imports alphabetically for logical ordering

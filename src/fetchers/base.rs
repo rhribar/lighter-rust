@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 #[async_trait]
 pub trait Fetcher: Send + Sync {
+    fn get_exchange_info(&self) -> ExchangeName;
+
     async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData>;
 
     async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>>;
@@ -38,6 +40,7 @@ pub struct Position {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketInfo {
+    pub exchange_id: Option<u64>,
     pub symbol: String,
     pub base_asset: String,
     pub quote_asset: String,
@@ -46,5 +49,6 @@ pub struct MarketInfo {
     pub leverage: Decimal,
     pub funding_rate: Decimal,
     pub sz_decimals: Decimal,
+    pub px_decimals: Decimal,
     pub min_order_size_change: Decimal,
 }
