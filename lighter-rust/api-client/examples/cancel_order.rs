@@ -24,7 +24,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = LighterClient::new(base_url, &api_key, account_index, api_key_index)?;
 
     // Get order index from command line or use default
-    let order_index: i64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(12345);
+    let order_index: i64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(12345);
 
     println!("📝 Canceling order...");
     println!("  Market Index: 0");

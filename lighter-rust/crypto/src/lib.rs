@@ -55,12 +55,12 @@
 //!
 //! [`poseidon-hash`]: https://crates.io/crates/poseidon-hash
 
-pub mod scalar_field;
 pub mod schnorr;
+pub mod scalar_field;
 
 pub use scalar_field::ScalarField;
 
-pub use poseidon_hash::{Fp5Element, Goldilocks};
+pub use poseidon_hash::{Goldilocks, Fp5Element};
 
 // Re-export Schnorr functions
 pub use schnorr::{sign_with_nonce, verify_signature, Point};
@@ -89,3 +89,4 @@ pub enum CryptoError {
 
 /// Result type for cryptographic operations.
 pub type Result<T> = std::result::Result<T, CryptoError>;
+

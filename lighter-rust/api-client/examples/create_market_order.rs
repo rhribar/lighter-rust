@@ -1,4 +1,4 @@
-use api_client::{CreateOrderRequest, LighterClient};
+use api_client::{LighterClient, CreateOrderRequest};
 use std::env;
 
 #[tokio::main]
@@ -25,15 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a market order
     println!("📝 Creating market order...");
-    let response = client
-        .create_market_order(
-            0,      // order_book_index (0 = BTC-USD or ETH-USD)
-            12345,  // client_order_index (unique identifier)
-            1000,   // base_amount (0.001 tokens in smallest unit)
-            349659, // avg_execution_price (max price in cents)
-            false,  // is_ask (false = buy order)
-        )
-        .await?;
+    let response = client.create_market_order(
+        0,                    // order_book_index (0 = BTC-USD or ETH-USD)
+        12345,                // client_order_index (unique identifier)
+        1000,                 // base_amount (0.001 tokens in smallest unit)
+        349659,               // avg_execution_price (max price in cents)
+        false,                // is_ask (false = buy order)
+    ).await?;
 
     println!("✅ Market order submitted!");
     println!("📥 Response:");
