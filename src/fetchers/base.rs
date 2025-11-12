@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub trait Fetcher: Send + Sync {
     fn get_exchange_info(&self) -> ExchangeName;
 
-    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData>;
+    async fn get_account_data(&self) -> PointsBotResult<AccountData>;
 
     async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>>;
 }

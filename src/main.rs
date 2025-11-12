@@ -7,13 +7,15 @@ use rust_decimal::{
     Decimal,
 };
 use std::str::FromStr;
-use tokio::time::{sleep, Duration};
+use tokio::{
+    task,
+    time::{sleep, Duration},
+};
 
-use ethers::signers::LocalWallet;
 use points_bot_rs::{
-    fetchers::{AccountData, Fetcher, FetcherExtended, FetcherHyperliquid, FetcherLighter, MarketInfo, Position},
-    operators::{create_operator_hyperliquid, Operator, OperatorExtended, OrderRequest, OrderResponse, OrderType},
-    BotConfig, BotMode, ExchangeName, OperatorLighter, PointsBotResult, PositionSide,
+    fetchers::{AccountData, Fetcher, MarketInfo, Position},
+    operators::{Operator, OrderRequest, OrderResponse, OrderType},
+    BotEnvConfig, BotJsonConfig, BotMode, ExchangeName, PointsBotResult, PositionSide,
 };
 use rust_decimal::RoundingStrategy;
 
@@ -36,24 +38,14 @@ struct ArbitrageOpportunity {
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let config = BotConfig::load_env().expect("Failed to load configuration");
+    let env_config = BotEnvConfig::load_env().expect("Failed to load configuration");
     info!(
-        "Starting Points Bot - Mode: {:?} | Wallet: {}",
-        config.mode, config.wallet_address
+        "Starting Cluster - Mode: {:?} | Config File Path: {}",
+        env_config.mode,
+        env_config.config_file_path.as_deref().unwrap_or("None")
     );
 
-    let private_key = config.private_key.as_deref().expect("Missing private_key in config");
-    let wallet = LocalWallet::from_str(private_key).expect("Failed to create wallet from private key");
-
-    let fetcher_hyperliquid = Box::new(FetcherHyperliquid::new());
-    let fetcher_extended = Box::new(FetcherExtended::new());
-    let fetcher_lighter = Box::new(FetcherLighter::new());
-
-    let operator_hyperliquid = create_operator_hyperliquid(wallet).await;
-    let operator_extended = Box::new(OperatorExtended::new().await);
-    let operator_lighter = Box::new(OperatorLighter::new().await);
-
-    if config.mode == BotMode::Production {
+    if env_config.mode == BotMode::Production {
         let schedule = Schedule::from_str("0 */10 * * * * *").unwrap();
         // 0 30 0,4,8,12,16,20 * * * *
         // 0 40 0,8,16 * * * *
@@ -61,46 +53,54 @@ async fn main() -> Result<()> {
 
         loop {
             let now = Utc::now();
+
             if let Some(next) = schedule.upcoming(Utc).next() {
                 let duration = (next - now).to_std().unwrap();
                 info!("Next trade scheduled at: {:?}", next);
 
                 sleep(duration).await;
 
-                /* let current_config = load_config_from_json("bots_config.json", &config.wallet_address)
-                    .unwrap_or(config.clone());
- */
-                trade(
-                    config.clone(),
-                    fetcher_extended.as_ref(),
-                    fetcher_lighter.as_ref(),
-                    operator_extended.as_ref(),
-                    operator_lighter.as_ref(),
-                )
-                .await;
+                let configs = BotJsonConfig::load_config_file(&env_config).expect("Failed to load config file");
+
+                for config_json in configs {
+                    let bot_config = BotJsonConfig::process_config(&config_json).await;
+
+                    task::spawn(async move {
+                        trade(
+                            bot_config.fetcher_a.as_ref(),
+                            bot_config.fetcher_b.as_ref(),
+                            bot_config.operator_a.as_ref(),
+                            bot_config.operator_b.as_ref(),
+                        )
+                        .await;
+                    });
+                }
             }
         }
     } else {
+        let config = BotJsonConfig::load_config_file(&env_config)
+            .expect("Failed to load config file")
+            .into_iter()
+            .next();
+
+        info!("Loaded config: {:?}", config);
+
+        let bot_config = BotJsonConfig::process_config(&config.unwrap()).await;
+
         trade(
-            config.clone(),
-            fetcher_extended.as_ref(),
-            fetcher_lighter.as_ref(),
-            operator_extended.as_ref(),
-            operator_lighter.as_ref(),
+            bot_config.fetcher_a.as_ref(),
+            bot_config.fetcher_b.as_ref(),
+            bot_config.operator_a.as_ref(),
+            bot_config.operator_b.as_ref(),
         )
         .await;
         Ok(())
     }
 }
 
-async fn trade(
-    config: BotConfig,
-    fetcher_a: &dyn Fetcher,
-    fetcher_b: &dyn Fetcher,
-    operator_a: &dyn Operator,
-    operator_b: &dyn Operator,
-) {
-    let (positions_a, positions_b, _, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b, &config).await;
+async fn trade(fetcher_a: &dyn Fetcher, fetcher_b: &dyn Fetcher, operator_a: &dyn Operator, operator_b: &dyn Operator) {
+    let env_config = BotEnvConfig::load_env().expect("Failed to load configuration");
+    let (positions_a, positions_b, _, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
 
     // business logic, decide if rebalance is needed
     let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&markets_a, &markets_b).await;
@@ -154,7 +154,7 @@ async fn trade(
                 error!("Failed to close positions: {:?}", e);
             });
 
-        let sleep_time = if config.mode == BotMode::Production {
+        let sleep_time = if env_config.mode == BotMode::Production {
             5 * 60
         } else {
             5 * 60
@@ -170,7 +170,7 @@ async fn trade(
     }
 
     if is_first_time || change_position {
-        let (_, _, min_available_balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b, &config).await;
+        let (_, _, min_available_balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
 
         let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&markets_a, &markets_b).await;
         let best_op = get_best_op(&arbitrage_opportunities).await;
@@ -256,7 +256,6 @@ async fn trade(
 async fn get_trading_data(
     fetcher_a: &dyn Fetcher,
     fetcher_b: &dyn Fetcher,
-    config: &BotConfig,
 ) -> (
     Vec<Position>,
     Vec<Position>,
@@ -264,8 +263,8 @@ async fn get_trading_data(
     Vec<MarketInfo>,
     Vec<MarketInfo>,
 ) {
-    let account_a = get_account_data(fetcher_a, &config).await;
-    let account_b = get_account_data(fetcher_b, &config).await;
+    let account_a = get_account_data(fetcher_a).await;
+    let account_b = get_account_data(fetcher_b).await;
 
     let positions_a = get_positions(&account_a);
     let positions_b = get_positions(&account_b);
@@ -283,15 +282,11 @@ async fn get_trading_data(
     (positions_a, positions_b, min_available_balance, markets_a, markets_b)
 }
 
-async fn get_account_data(fetcher: &dyn Fetcher, config: &BotConfig) -> Option<AccountData> {
-    fetcher
-        .get_account_data(&config.wallet_address)
-        .await
-        .map(Some)
-        .unwrap_or_else(|e| {
-            error!("Failed to get A account: {:?}", e);
-            None
-        })
+async fn get_account_data(fetcher: &dyn Fetcher) -> Option<AccountData> {
+    fetcher.get_account_data().await.map(Some).unwrap_or_else(|e| {
+        error!("Failed to get A account: {:?}", e);
+        None
+    })
 }
 
 fn get_positions(account: &Option<AccountData>) -> Vec<Position> {
@@ -498,7 +493,7 @@ async fn get_adjusted_price_and_side(
     let entry_offset = match operator.get_exchange_info() {
         ExchangeName::Hyperliquid => Decimal::from_f64(0.0).unwrap(),
         ExchangeName::Extended => Decimal::from_f64(0.0).unwrap(),
-        ExchangeName::Lighter => Decimal::from_f64(0.0).unwrap()
+        ExchangeName::Lighter => Decimal::from_f64(0.0).unwrap(),
     };
 
     /* let exit_offset = match operator.get_exchange_info() {
@@ -510,14 +505,13 @@ async fn get_adjusted_price_and_side(
     let scale_ask = market.ask_price.scale();
     let scale_bid = market.bid_price.scale();
 
-    let exit_offset = Decimal::from_f64(0.0005).unwrap();
+    let exit_offset = Decimal::from_f64(0.000).unwrap();
 
     match side {
         PositionSide::Long => {
             if close {
                 (
-                    (market.bid_price * (Decimal::ONE + exit_offset))
-                        .round_dp(scale_ask),
+                    (market.bid_price * (Decimal::ONE + exit_offset)).round_dp(scale_ask),
                     PositionSide::Short,
                 )
             } else {
@@ -530,8 +524,7 @@ async fn get_adjusted_price_and_side(
         PositionSide::Short => {
             if close {
                 (
-                    (market.ask_price * (Decimal::ONE - exit_offset))
-                        .round_dp(scale_bid),
+                    (market.ask_price * (Decimal::ONE - exit_offset)).round_dp(scale_bid),
                     PositionSide::Long,
                 )
             } else {
@@ -615,3 +608,21 @@ async fn close_positions_for_market(
 
     Ok(())
 }
+
+// two params, funding and price
+// if funding bad and price good
+// if funding good and price not good
+// if both good
+// if both bad
+
+// check each hour
+// if price is good and (funding is not 50% than next op dont close and price is good of the next pos)
+// if price is good and (funding is not that good than dont close and price is not that good)
+// if price is bad and funding is positive (dont do anything)
+// if price is bad and funding is negative (close pos)
+
+// cene
+// cene z trading feejom
+// cene z moji offsetom
+
+// lighter cene fuckery

@@ -1,6 +1,7 @@
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
 use crate::{
-    parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
+    parse_decimal, AssetMapping, BotJsonConfig, ExchangeName, PointsBotError, PointsBotResult, PositionSide,
+    TickerDirection,
 };
 use async_trait::async_trait;
 use rust_decimal::Decimal;
@@ -83,10 +84,10 @@ pub struct FetcherExtended {
 }
 
 impl FetcherExtended {
-    pub fn new() -> Self {
+    pub fn new(config: &BotJsonConfig) -> Self {
         let client = HttpClient::new("https://api.starknet.extended.exchange/api/v1".to_string(), Some(1000));
 
-        let extended_api_key = std::env::var("EXTENDED_API_KEY").ok();
+        let extended_api_key = config.extended.as_ref().map(|ext| ext.api_key.clone());
 
         Self {
             client,
@@ -133,7 +134,7 @@ impl Fetcher for FetcherExtended {
         ExchangeName::Extended
     }
 
-    async fn get_account_data(&self, _address: &str) -> PointsBotResult<AccountData> {
+    async fn get_account_data(&self) -> PointsBotResult<AccountData> {
         let headers = self.get_auth_headers()?;
         let balance_response = self.client.get("/user/balance", Some(headers.clone())).await?;
         let balance_data: ExtendedResponse<ExtendedBalanceData> = self.client.parse_json(balance_response).await?;

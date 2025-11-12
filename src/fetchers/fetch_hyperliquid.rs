@@ -7,7 +7,8 @@ use serde_json::json;
 
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
 use crate::{
-    parse_decimal, AssetMapping, ExchangeName, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
+    parse_decimal, AssetMapping, BotJsonConfig, ExchangeName, PointsBotError, PointsBotResult, PositionSide,
+    TickerDirection,
 };
 
 #[derive(Debug, Deserialize)]
@@ -96,13 +97,16 @@ struct HyperliquidAssetCtx {
 
 pub struct FetcherHyperliquid {
     client: HttpClient,
+    wallet: Option<String>,
 }
 
 impl FetcherHyperliquid {
-    pub fn new() -> Self {
+    pub fn new(config: &BotJsonConfig) -> Self {
         let client = HttpClient::new("https://api.hyperliquid.xyz".to_string(), Some(100));
 
-        Self { client }
+        let wallet = config.wallet_address.clone();
+
+        Self { client, wallet }
     }
 
     fn parse_position(asset_position: &HyperliquidAssetPosition) -> Option<Position> {
@@ -148,7 +152,11 @@ impl Fetcher for FetcherHyperliquid {
         ExchangeName::Hyperliquid
     }
 
-    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData> {
+    async fn get_account_data(&self) -> PointsBotResult<AccountData> {
+        let address = self.wallet.as_ref().ok_or_else(|| PointsBotError::Config {
+            msg: "Wallet address not configured for Fetcher Hyperliquid".to_string(),
+            source: None,
+        })?;
         let payload = json!({
             "type": "clearinghouseState",
             "user": address

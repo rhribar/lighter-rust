@@ -1,6 +1,9 @@
 // Helper to extract price and size from order book array
 use super::base::{AccountData, Fetcher, MarketInfo, Position};
-use crate::{AssetMapping, ExchangeName, HttpClient, PointsBotResult, PositionSide, TickerDirection};
+use crate::{
+    AssetMapping, BotJsonConfig, ExchangeName, HttpClient, PointsBotError, PointsBotResult, PositionSide,
+    TickerDirection,
+};
 use async_trait::async_trait;
 use async_tungstenite::{tokio::connect_async, tungstenite::Message};
 use futures::{SinkExt, StreamExt};
@@ -13,22 +16,6 @@ use std::{
     str::FromStr,
 };
 use tokio::time::{timeout, Duration};
-
-#[derive(Debug)]
-struct MarketInfoBuilder {
-    exchange_id: Option<u64>,
-    symbol: String,
-    base_asset: String,
-    quote_asset: String,
-    bid_price: Option<Decimal>,
-    ask_price: Option<Decimal>,
-    leverage: Option<Decimal>,
-    funding_rate: Option<Decimal>,
-    sz_decimals: Option<Decimal>,
-    px_decimals: Option<Decimal>,
-    min_order_size_change: Option<Decimal>,
-    last_trade_price: Option<Decimal>,
-}
 
 pub struct FetcherLighter {
     client: HttpClient,
@@ -61,11 +48,27 @@ struct ApiPosition {
     liquidation_price: String,
 }
 
+#[derive(Debug)]
+struct MarketInfoBuilder {
+    exchange_id: Option<u64>,
+    symbol: String,
+    base_asset: String,
+    quote_asset: String,
+    bid_price: Option<Decimal>,
+    ask_price: Option<Decimal>,
+    leverage: Option<Decimal>,
+    funding_rate: Option<Decimal>,
+    sz_decimals: Option<Decimal>,
+    px_decimals: Option<Decimal>,
+    min_order_size_change: Option<Decimal>,
+    last_trade_price: Option<Decimal>,
+}
+
 impl FetcherLighter {
-    pub fn new() -> Self {
+    pub fn new(config: &BotJsonConfig) -> Self {
         let client = HttpClient::new("https://mainnet.zklighter.elliot.ai/api/v1/".to_string(), Some(1000));
 
-        let wallet = std::env::var("WALLET_ADDRESS").ok();
+        let wallet = config.wallet_address.clone();
 
         Self { client, wallet }
     }
@@ -77,7 +80,11 @@ impl Fetcher for FetcherLighter {
         ExchangeName::Lighter
     }
 
-    async fn get_account_data(&self, address: &str) -> PointsBotResult<AccountData> {
+    async fn get_account_data(&self) -> PointsBotResult<AccountData> {
+        let address = self.wallet.as_ref().ok_or_else(|| PointsBotError::Config {
+            msg: "Wallet address not configured for Fetcher Lighter".to_string(),
+            source: None,
+        })?;
         let url = format!("account?by=l1_address&value={}", address);
         let resp = self.client.get(&url, None).await?;
         let resp_text = resp.text().await?;
@@ -207,7 +214,9 @@ async fn fetch_market_details(http_client: &crate::HttpClient) -> PointsBotResul
                     .as_i64()
                     .map(|v| Decimal::from_i64(v).unwrap_or(Decimal::ZERO)),
                 min_order_size_change: None,
-                last_trade_price: market["last_trade_price"].as_f64().map(|f| Decimal::from_f64(f).unwrap_or(Decimal::ZERO)),
+                last_trade_price: market["last_trade_price"]
+                    .as_f64()
+                    .map(|f| Decimal::from_f64(f).unwrap_or(Decimal::ZERO)),
             },
         );
     }

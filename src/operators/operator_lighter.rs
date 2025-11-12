@@ -1,7 +1,7 @@
 use crate::{
     fetchers::MarketInfo,
     operators::{Operator, OrderRequest, OrderResponse},
-    AssetMapping, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide, TickerDirection,
+    BotJsonConfig, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide,
 };
 use api_client::{CreateOrderRequest, LighterClient};
 use async_trait::async_trait;
@@ -14,14 +14,10 @@ pub struct OperatorLighter {
 }
 
 impl OperatorLighter {
-    pub async fn new() -> Self {
-        let lighter_api_key = std::env::var("LIGHTER_API_KEY").ok();
-        let account_index = std::env::var("LIGHTER_ACCOUNT_INDEX")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok());
-        let api_key_index = std::env::var("LIGHTER_API_KEY_INDEX")
-            .ok()
-            .and_then(|v| v.parse::<u8>().ok());
+    pub async fn new(config: &BotJsonConfig) -> Self {
+        let lighter_api_key = config.lighter.as_ref().map(|lighter| lighter.api_key.clone());
+        let account_index = config.lighter.as_ref().map(|lighter| lighter.account_index as i64);
+        let api_key_index = config.lighter.as_ref().map(|lighter| lighter.api_key_index as u8);
 
         let client = LighterClient::new(
             "https://mainnet.zklighter.elliot.ai".to_string(),

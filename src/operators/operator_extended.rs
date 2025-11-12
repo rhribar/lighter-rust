@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use crate::{
     fetchers::MarketInfo,
@@ -6,8 +6,8 @@ use crate::{
         init_extended_markets::{extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc, Side},
         Operator, OrderRequest, OrderResponse,
     },
-    AssetMapping, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult, PositionSide,
-    TickerDirection,
+    AssetMapping, BotJsonConfig, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult,
+    PositionSide, TickerDirection,
 };
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -18,11 +18,12 @@ pub struct OperatorExtended {
     client: crate::operators::base::HttpClient,
     api_key: Option<String>,
     stark_private_key: Option<String>,
+    stark_public_key: Option<String>,
     vault_id: Option<u64>,
 }
 
 impl OperatorExtended {
-    pub async fn new() -> Self {
+    pub async fn new(config: &BotJsonConfig) -> Self {
         let _ = init_extended_markets().await;
         let client = crate::operators::base::HttpClient::new(
             "https://api.starknet.extended.exchange/api/v1".to_string(),
@@ -30,9 +31,10 @@ impl OperatorExtended {
         );
         Self {
             client,
-            api_key: std::env::var("EXTENDED_API_KEY").ok(),
-            stark_private_key: std::env::var("EXTENDED_STARK_PRIVATE_KEY").ok(),
-            vault_id: std::env::var("EXTENDED_VAULT_KEY").ok().and_then(|v| v.parse().ok()),
+            api_key: config.extended.as_ref().map(|ext| ext.api_key.clone()),
+            stark_private_key: config.extended.as_ref().map(|ext| ext.stark_private_key.clone()),
+            stark_public_key: config.extended.as_ref().map(|ext| ext.stark_public_key.clone()),
+            vault_id: config.extended.as_ref().and_then(|ext| Some(ext.vault_id)),
         }
     }
 
@@ -54,6 +56,7 @@ impl Operator for OperatorExtended {
                 source: None,
             });
         }
+
         order.market.symbol = AssetMapping::map_ticker(
             ExchangeName::Extended,
             &order.market.symbol,
@@ -105,15 +108,6 @@ impl Operator for OperatorExtended {
             source: Some(e.into()),
         })?;
 
-        let api_key = self.api_key.as_ref().ok_or_else(|| PointsBotError::Auth {
-            msg: "EXTENDED_API_KEY not set".to_string(),
-            source: None,
-        })?;
-        let stark_public_key = std::env::var("EXTENDED_STARK_PUBLIC_KEY").map_err(|e| PointsBotError::Auth {
-            msg: "EXTENDED_STARK_PUBLIC_KEY not found in environment".to_string(),
-            source: Some(Box::new(e)),
-        })?;
-
         let order_payload = json!({
             "id": order.id.to_string(),
             "market": order.market.symbol,
@@ -130,15 +124,18 @@ impl Operator for OperatorExtended {
                     "r": format!("0x{:x}", signature.r),
                     "s": format!("0x{:x}", signature.s)
                 },
-                "starkKey": stark_public_key,
+                "starkKey": self.stark_public_key.as_ref().unwrap(),
                 "collateralPosition": vault_id.to_string()
             },
             "selfTradeProtectionLevel": "ACCOUNT",
             "reduceOnly": order.reduce_only.unwrap_or(false),
             "postOnly": false,
         });
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("X-Api-Key".to_string(), api_key.clone());
+        let mut headers = HashMap::new();
+        headers.insert(
+            "X-Api-Key".to_string(),
+            self.api_key.clone().expect("extended api key not set"),
+        );
         headers.insert("User-Agent".to_string(), "bot-rs/1.0".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
 

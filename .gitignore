@@ -2,3 +2,4 @@
 /target
 .specstory
 .env-production
+config.json
