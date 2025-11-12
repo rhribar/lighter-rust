@@ -1,4 +1,4 @@
-use api_client::{LighterClient, CreateOrderRequest};
+use api_client::{CreateOrderRequest, LighterClient};
 use std::env;
 
 #[tokio::main]
@@ -25,20 +25,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a limit order
     println!("📝 Creating limit order...");
-    let order = CreateOrderRequest {
+    let create_order_req = CreateOrderRequest {
         account_index,
-        order_book_index: 0,      // 0 = BTC-USD or ETH-USD
-        client_order_index: 12345, // unique identifier
-        base_amount: 1000,         // 0.001 tokens in smallest unit
-        price: 349659,             // limit price in cents
-        is_ask: false,             // false = buy order
-        order_type: 0,             // 0 = LimitOrder
-        time_in_force: 1,          // 1 = GoodTillTime
+        order_book_index: 1,   // 0 = BTC-USD or ETH-USD
+        client_order_index: 0, // unique identifier
+        base_amount: 100,      // 0.001 tokens in smallest unit
+        price: 1040000,        // limit price in cents
+        is_ask: false,         // false = buy order
+        order_type: 0,         // 0 = LimitOrder
+        time_in_force: 1,      // 1 = GoodTillTime
         reduce_only: false,
         trigger_price: 0,
     };
 
-    let response = client.create_order(order).await?;
+    let response = client.create_order(create_order_req).await?;
 
     println!("✅ Limit order submitted!");
     println!("📥 Response:");

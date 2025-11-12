@@ -1,10 +1,10 @@
+use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use signer::KeyManager;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use base64::Engine;
 
 #[derive(Error, Debug)]
 pub enum ApiError {
@@ -22,7 +22,7 @@ pub enum ApiError {
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CreateOrderRequest {
     pub account_index: i64,
     pub order_book_index: u8,
@@ -45,15 +45,10 @@ pub struct LighterClient {
 }
 
 impl LighterClient {
-    pub fn new(
-        base_url: String,
-        private_key_hex: &str,
-        account_index: i64,
-        api_key_index: u8,
-    ) -> Result<Self> {
+    pub fn new(base_url: String, private_key_hex: &str, account_index: i64, api_key_index: u8) -> Result<Self> {
         let key_manager = KeyManager::from_hex(private_key_hex)?;
         let client = Client::new();
-        
+
         Ok(Self {
             client,
             base_url,
@@ -62,16 +57,18 @@ impl LighterClient {
             api_key_index,
         })
     }
-    
+
     pub async fn create_order(&self, order: CreateOrderRequest) -> Result<Value> {
         // Get nonce from API
         let nonce = self.get_nonce().await?;
-        
-        // Create transaction info with expiry time
-        // Transaction expires 10 minutes from now (599 seconds to account for timing differences)
+        println!("[create_order] Nonce: {}", nonce);
+        // Create transaction println with expiry time
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
         let expired_at = now + 599_000; // 10 minutes - 1 second (in milliseconds)
-        
+        let order_expiry = now + 28 * 24 * 60 * 60 * 1000; // 28 days in milliseconds
+        println!("[create_order] Now: {}, ExpiredAt: {}", now, expired_at);
+        println!("[create_order] Order struct: account_index={}, order_book_index={}, client_order_index={}, base_amount={}, price={}, is_ask={}, order_type={}, time_in_force={}, reduce_only={}, trigger_price={}",
+            order.account_index, order.order_book_index, order.client_order_index, order.base_amount, order.price, order.is_ask, order.order_type, order.time_in_force, order.reduce_only, order.trigger_price);
         let tx_info = json!({
             "AccountIndex": self.account_index,
             "ApiKeyIndex": self.api_key_index,
@@ -84,37 +81,41 @@ impl LighterClient {
             "TimeInForce": order.time_in_force,
             "ReduceOnly": if order.reduce_only { 1 } else { 0 },
             "TriggerPrice": order.trigger_price,
-            "OrderExpiry": 0, // NilOrderExpiry for market orders
+            "OrderExpiry": order_expiry,
             "ExpiredAt": expired_at,
             "Nonce": nonce,
             "Sig": ""
         });
-        
-        // Sign transaction (measure signing time if needed)
+        println!("[create_order] tx_info JSON: {}", tx_info);
         let tx_json = serde_json::to_string(&tx_info)?;
+        println!("[create_order] tx_json string: {}", tx_json);
         let signature = self.sign_transaction(&tx_json)?;
-        
-        // Add signature to transaction (base64-encoded)
+        println!(
+            "[create_order] Signature (base64): {}",
+            base64::engine::general_purpose::STANDARD.encode(&signature)
+        );
         let mut final_tx_info = tx_info;
         final_tx_info["Sig"] = json!(base64::engine::general_purpose::STANDARD.encode(&signature));
-        
-        // Send request with form data
+        println!("[create_order] Final tx_info with signature: {}", final_tx_info);
         let form_data = [
             ("tx_type", "14"), // CREATE_ORDER
             ("tx_info", &serde_json::to_string(&final_tx_info)?),
             ("price_protection", "true"),
         ];
-        
+        println!(
+            "[create_order] Form data: tx_type={}, price_protection={}, tx_info={}",
+            form_data[0].1, form_data[2].1, form_data[1].1
+        );
         let response = self
             .client
             .post(&format!("{}/api/v1/sendTx", self.base_url))
             .form(&form_data)
             .send()
             .await?;
-        
         let response_text = response.text().await?;
+        println!("[create_order] Response text: {}", response_text);
         let response_json: Value = serde_json::from_str(&response_text)?;
-        
+        println!("[create_order] Response JSON: {}", response_json);
         Ok(response_json)
     }
 
@@ -133,7 +134,7 @@ impl LighterClient {
             base_amount,
             price: avg_execution_price,
             is_ask,
-            order_type: 1, // MarketOrder
+            order_type: 1,    // MarketOrder
             time_in_force: 0, // ImmediateOrCancel
             reduce_only: false,
             trigger_price: 0,
@@ -269,20 +270,15 @@ impl LighterClient {
     }
 
     /// Update leverage for a market
-    /// 
+    ///
     /// # Arguments
     /// * `market_index` - Market index (0-based)
     /// * `leverage` - Leverage value (e.g., 3 for 3x leverage)
     /// * `margin_mode` - Margin mode: 0 for CROSS_MARGIN, 1 for ISOLATED_MARGIN
-    /// 
+    ///
     /// # Returns
     /// JSON response from the API
-    pub async fn update_leverage(
-        &self,
-        market_index: u8,
-        leverage: u16,
-        margin_mode: u8,
-    ) -> Result<Value> {
+    pub async fn update_leverage(&self, market_index: u8, leverage: u16, margin_mode: u8) -> Result<Value> {
         let nonce = self.get_nonce().await?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
         let expired_at = now + 599_000;
@@ -326,34 +322,34 @@ impl LighterClient {
 
         Ok(response_json)
     }
-    
+
     pub async fn get_nonce(&self) -> Result<i64> {
         // Get next nonce from API endpoint
         let url = format!(
             "{}/api/v1/nextNonce?account_index={}&api_key_index={}",
             self.base_url, self.account_index, self.api_key_index
         );
-        
+
         let response = self.client.get(&url).send().await?;
         let response_text = response.text().await?;
         let response_json: Value = serde_json::from_str(&response_text)?;
-        
+
         // Extract nonce from JSON response
         let nonce = response_json["nonce"]
             .as_i64()
             .ok_or_else(|| ApiError::Api("Invalid nonce response format".to_string()))?;
-        
+
         Ok(nonce)
     }
-    
-            /// Signs a transaction JSON string and returns the signature.
-    /// 
+
+    /// Signs a transaction JSON string and returns the signature.
+    ///
     /// This method is a convenience wrapper for CREATE_ORDER transactions (type 14).
     /// For other transaction types, use `sign_transaction_with_type`.
-    /// 
+    ///
     /// # Arguments
     /// * `tx_json` - JSON string representation of the transaction
-    /// 
+    ///
     /// # Returns
     /// An 80-byte signature array
     pub fn sign_transaction(&self, tx_json: &str) -> Result<[u8; 80]> {
@@ -361,11 +357,11 @@ impl LighterClient {
     }
 
     /// Signs a transaction with a specific transaction type.
-    /// 
+    ///
     /// # Arguments
     /// * `tx_json` - JSON string representation of the transaction
     /// * `tx_type` - Transaction type code (e.g., 14 for CREATE_ORDER, 15 for CANCEL_ORDER, 20 for UPDATE_LEVERAGE)
-    /// 
+    ///
     /// # Returns
     /// An 80-byte signature array
     pub fn sign_transaction_with_type(&self, tx_json: &str, tx_type: u32) -> Result<[u8; 80]> {
@@ -373,33 +369,29 @@ impl LighterClient {
     }
 
     /// Internal method to sign a transaction.
-    /// 
+    ///
     /// This method extracts fields from the transaction JSON, converts them to Goldilocks
     /// field elements in the correct order, hashes them using Poseidon2, and signs the hash.
-    /// 
+    ///
     /// The transaction hash includes:
     /// - Chain ID (304 for mainnet, 300 for testnet)
     /// - Transaction type
     /// - Common fields: nonce, expired_at, account_index, api_key_index
     /// - Transaction-specific fields (varies by type)
-    /// 
+    ///
     /// # Arguments
     /// * `tx_json` - JSON string representation of the transaction
     /// * `tx_type` - Transaction type code
-    /// 
+    ///
     /// # Returns
     /// An 80-byte signature array (s || e format)
     fn sign_transaction_internal(&self, tx_json: &str, tx_type: u32) -> Result<[u8; 80]> {
-                // Parse the transaction JSON to extract fields
+        // Parse the transaction JSON to extract fields
         let tx_value: Value = serde_json::from_str(tx_json)?;
 
         // Determine chain ID based on base URL
         // Mainnet: 304, Testnet: 300
-        let lighter_chain_id = if self.base_url.contains("mainnet") {
-            304u32
-        } else {
-            300u32
-        };
+        let lighter_chain_id = if self.base_url.contains("mainnet") { 304u32 } else { 300u32 };
         let nonce = tx_value["Nonce"].as_i64().unwrap_or(0);
         let expired_at = tx_value["ExpiredAt"].as_i64().unwrap_or(0);
         let account_index = tx_value["AccountIndex"].as_i64().unwrap_or(0);
@@ -414,35 +406,35 @@ impl LighterClient {
         let elements = match tx_type {
             14 => {
                 // CREATE_ORDER: 16 elements
-        let market_index = tx_value["MarketIndex"].as_u64().unwrap_or(0) as u32;
-        let client_order_index = tx_value["ClientOrderIndex"].as_i64().unwrap_or(0);
-        let base_amount = tx_value["BaseAmount"].as_i64().unwrap_or(0);
-        let price = tx_value["Price"]
-            .as_u64()
-            .or_else(|| tx_value["Price"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let is_ask = tx_value["IsAsk"]
-            .as_u64()
-            .or_else(|| tx_value["IsAsk"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let order_type = tx_value["Type"]
-            .as_u64()
-            .or_else(|| tx_value["Type"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let time_in_force = tx_value["TimeInForce"]
-            .as_u64()
-            .or_else(|| tx_value["TimeInForce"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let reduce_only = tx_value["ReduceOnly"]
-            .as_u64()
-            .or_else(|| tx_value["ReduceOnly"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let trigger_price = tx_value["TriggerPrice"]
-            .as_u64()
-            .or_else(|| tx_value["TriggerPrice"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let order_expiry = tx_value["OrderExpiry"].as_i64().unwrap_or(0);
-        
+                let market_index = tx_value["MarketIndex"].as_u64().unwrap_or(0) as u32;
+                let client_order_index = tx_value["ClientOrderIndex"].as_i64().unwrap_or(0);
+                let base_amount = tx_value["BaseAmount"].as_i64().unwrap_or(0);
+                let price = tx_value["Price"]
+                    .as_u64()
+                    .or_else(|| tx_value["Price"].as_i64().map(|v| v as u64))
+                    .unwrap_or(0) as u32;
+                let is_ask = tx_value["IsAsk"]
+                    .as_u64()
+                    .or_else(|| tx_value["IsAsk"].as_i64().map(|v| v as u64))
+                    .unwrap_or(0) as u32;
+                let order_type = tx_value["Type"]
+                    .as_u64()
+                    .or_else(|| tx_value["Type"].as_i64().map(|v| v as u64))
+                    .unwrap_or(0) as u32;
+                let time_in_force = tx_value["TimeInForce"]
+                    .as_u64()
+                    .or_else(|| tx_value["TimeInForce"].as_i64().map(|v| v as u64))
+                    .unwrap_or(0) as u32;
+                let reduce_only = tx_value["ReduceOnly"]
+                    .as_u64()
+                    .or_else(|| tx_value["ReduceOnly"].as_i64().map(|v| v as u64))
+                    .unwrap_or(0) as u32;
+                let trigger_price = tx_value["TriggerPrice"]
+                    .as_u64()
+                    .or_else(|| tx_value["TriggerPrice"].as_i64().map(|v| v as u64))
+                    .unwrap_or(0) as u32;
+                let order_expiry = tx_value["OrderExpiry"].as_i64().unwrap_or(0);
+
                 vec![
                     Goldilocks::from_canonical_u64(lighter_chain_id as u64),
                     Goldilocks::from_canonical_u64(tx_type as u64),
@@ -500,15 +492,14 @@ impl LighterClient {
             8 => {
                 // CHANGE_PUB_KEY: needs pubkey parsing (ArrayFromCanonicalLittleEndianBytes)
                 let pubkey_hex = tx_value["PubKey"].as_str().unwrap_or("");
-                let pubkey_bytes = hex::decode(pubkey_hex)
-                    .map_err(|e| ApiError::Api(format!("Invalid PubKey hex: {}", e)))?;
+                let pubkey_bytes = hex::decode(pubkey_hex).map_err(|e| ApiError::Api(format!("Invalid PubKey hex: {}", e)))?;
                 if pubkey_bytes.len() != 40 {
                     return Err(ApiError::Api("PubKey must be 40 bytes".to_string()));
                 }
                 // Convert 40-byte public key to 5 Goldilocks elements (8 bytes per element)
                 let mut pubkey_elems = Vec::new();
                 for i in 0..5 {
-                    let chunk = &pubkey_bytes[i*8..(i+1)*8];
+                    let chunk = &pubkey_bytes[i * 8..(i + 1) * 8];
                     let val = u64::from_le_bytes(chunk.try_into().unwrap());
                     pubkey_elems.push(Goldilocks::from_canonical_u64(val));
                 }
@@ -556,15 +547,14 @@ impl LighterClient {
                 return Err(ApiError::Api(format!("Unsupported transaction type: {}", tx_type)));
             }
         };
-        
-                // Hash the Goldilocks field elements using Poseidon2 to produce a 40-byte hash
+
+        // Hash the Goldilocks field elements using Poseidon2 to produce a 40-byte hash
         // The result is a quintic extension field element (Fp5) which is then converted to bytes
         use poseidon_hash::hash_to_quintic_extension;
         let hash_result = hash_to_quintic_extension(&elements);
         let message_array = hash_result.to_bytes_le();
 
         // Sign the transaction hash using Schnorr signature
-        self.key_manager.sign(&message_array)
-            .map_err(|e| ApiError::Signer(e))
+        self.key_manager.sign(&message_array).map_err(|e| ApiError::Signer(e))
     }
 }
