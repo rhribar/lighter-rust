@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
     );
 
     if env_config.mode == BotMode::Production {
-        let schedule = Schedule::from_str("0 20 0,2,4,6,8,10,12,14,16,18,20,22 * * * *").unwrap();
+        let schedule = Schedule::from_str("0 20 * * * * *").unwrap();
         // 0 30 0,4,8,12,16,20 * * * *
         // 0 40 0,8,16 * * * *
         // 0 */10 * * * * *
