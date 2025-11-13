@@ -224,6 +224,7 @@ impl Fetcher for FetcherExtended {
             let ask_price = Decimal::from_str(&market.market_stats.ask_price)?;
 
             market_infos.push(MarketInfo {
+                exchange: ExchangeName::Extended,
                 exchange_id: None,
                 symbol: symbol.clone(),
                 base_asset: symbol,

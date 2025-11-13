@@ -246,6 +246,7 @@ impl Fetcher for FetcherHyperliquid {
                     let ask_price = parse_decimal(&ctx.impact_pxs.as_ref().unwrap()[1])?;
 
                     markets.push(MarketInfo {
+                        exchange: ExchangeName::Hyperliquid,
                         exchange_id: None,
                         symbol: symbol.clone(),
                         base_asset: symbol.clone(),

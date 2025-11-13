@@ -6,13 +6,14 @@ use rust_decimal::{
     prelude::{FromPrimitive, ToPrimitive},
     Decimal,
 };
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use tokio::{
     task,
     time::{sleep, Duration},
 };
 
 use points_bot_rs::{
+    config,
     fetchers::{AccountData, Fetcher, MarketInfo, Position},
     operators::{Operator, OrderRequest, OrderResponse, OrderType},
     BotEnvConfig, BotJsonConfig, BotMode, ExchangeName, PointsBotResult, PositionSide,
@@ -22,16 +23,31 @@ use rust_decimal::RoundingStrategy;
 #[derive(Debug, Clone)]
 struct ArbitrageOpportunity {
     symbol: String,
-    rate_a: Decimal,
-    rate_b: Decimal,
-    diff: Decimal,
-    leverage_a: Decimal,
-    leverage_b: Decimal,
-    price_crossed: bool,
-    bid_opportunity_price: Decimal,
-    ask_opportunity_price: Decimal,
-    market_a: MarketInfo,
-    market_b: MarketInfo,
+    long_market: MarketInfo,
+    short_market: MarketInfo,
+    entry_arbitrage: Option<EntryArbitrage>,
+    exit_arbitrage: Option<ExitArbitrage>,
+    funding_diff: Decimal,
+}
+
+#[derive(Debug, Clone)]
+struct EntryArbitrage {
+    long_entry_px: Decimal,
+    short_entry_px: Decimal,
+    long_entry_px_wfees: Decimal,
+    short_entry_px_wfees: Decimal,
+    entry_arb_valid_before_fees: bool,
+    entry_arb_valid_after_fees: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ExitArbitrage {
+    long_exit_px: Decimal,
+    short_exit_px: Decimal,
+    long_exit_px_wfees: Decimal,
+    short_exit_px_wfees: Decimal,
+    exit_arb_valid_before_fees: bool,
+    exit_arb_valid_after_fees: bool,
 }
 
 #[tokio::main]
@@ -67,6 +83,7 @@ async fn main() -> Result<()> {
 
                     task::spawn(async move {
                         trade(
+                            &config_json,
                             bot_config.fetcher_a.as_ref(),
                             bot_config.fetcher_b.as_ref(),
                             bot_config.operator_a.as_ref(),
@@ -85,9 +102,11 @@ async fn main() -> Result<()> {
 
         info!("Loaded config: {:?}", config);
 
-        let bot_config = BotJsonConfig::process_config(&config.unwrap()).await;
+        let config_ref = config.as_ref().expect("Config is None");
+        let bot_config = BotJsonConfig::process_config(config_ref).await;
 
         trade(
+            config_ref,
             bot_config.fetcher_a.as_ref(),
             bot_config.fetcher_b.as_ref(),
             bot_config.operator_a.as_ref(),
@@ -98,148 +117,231 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn trade(fetcher_a: &dyn Fetcher, fetcher_b: &dyn Fetcher, operator_a: &dyn Operator, operator_b: &dyn Operator) {
+async fn trade(
+    config: &BotJsonConfig,
+    fetcher_a: &dyn Fetcher,
+    fetcher_b: &dyn Fetcher,
+    operator_a: &dyn Operator,
+    operator_b: &dyn Operator,
+) {
     let env_config = BotEnvConfig::load_env().expect("Failed to load configuration");
     let (positions_a, positions_b, _, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
 
-    // business logic, decide if rebalance is needed
-    let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&markets_a, &markets_b).await;
-    let best_op = get_best_op(&arbitrage_opportunities).await;
+    let mut operator_map: HashMap<ExchangeName, &dyn Operator> = HashMap::new();
+    operator_map.insert(operator_a.get_exchange_info(), operator_a);
+    operator_map.insert(operator_b.get_exchange_info(), operator_b);
 
-    let op = best_op.unwrap();
-    let symbol = &op.symbol;
-    let diff = op.diff;
+    let has_positions_open = positions_a.len() > 0 || positions_b.len() > 0;
+    let mut change_position = true;
 
-    let prev_symbol = positions_a.first().map(|p| &p.symbol);
-    let prev_best_diff = prev_symbol
-        .and_then(|s| {
-            arbitrage_opportunities
-                .iter()
-                .find(|op| &op.symbol == s)
-                .map(|op| op.diff)
-        })
-        .unwrap_or(Decimal::ZERO);
-
-    let is_better = diff > prev_best_diff * Decimal::from_f32(1.11).unwrap();
-    let is_same_symbol = prev_symbol.map_or(false, |s| symbol == s);
-
-    info!(
-        "Decision Making: Prev op symbol: {:?}, Prev op current funding diff: {:?}%, Next op symbol: {:?}, Next op funding diff: {:?}%, Already Holding Same Asset: {}, Is Better (33% threshold): {}",
-        prev_symbol,
-        prev_best_diff * Decimal::from(24 * 365 * 100),
-        symbol,
-        diff * Decimal::from(24 * 365 * 100),
-        is_same_symbol,
-        is_better
-    );
-
-    let is_first_time = positions_a.is_empty() && positions_b.is_empty();
-    let change_position = !is_first_time && !is_same_symbol && is_better;
-
-    info!(
-        "Trade Execution | Is First Time: {} | Change Position: {}",
-        is_first_time, change_position
-    );
-
-    if change_position {
-        close_positions_for_market(&positions_a, &markets_a, operator_a)
-            .await
-            .unwrap_or_else(|e| {
-                error!("Failed to close positions: {:?}", e);
-            });
-
-        close_positions_for_market(&positions_b, &markets_b, operator_b)
-            .await
-            .unwrap_or_else(|e| {
-                error!("Failed to close positions: {:?}", e);
-            });
-
-        let sleep_time = if env_config.mode == BotMode::Production {
-            5 * 60
+    if has_positions_open {
+        let current_symbol = if positions_a.len() > 0 {
+            positions_a.first().map(|p| &p.symbol)
         } else {
-            5 * 60
+            positions_b.first().map(|p| &p.symbol)
         };
 
-        info!("Sleeping for {} seconds to allow orders to fill and close", sleep_time);
+        let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, config).await;
+
+        let current_op_data = current_symbol.and_then(|s| arbitrage_opportunities.iter().find(|op| &op.symbol == s));
+
+        let current_funding_diff_ann = current_op_data
+            .map(|op| op.funding_diff * Decimal::from(24 * 365 * 100))
+            .unwrap_or(Decimal::ZERO);
+
         info!(
-            "Next trade scheduled at: {:?}",
-            Utc::now() + Duration::from_secs(sleep_time)
+            "Current open position symbol: {:?}, funding diff ann: {:?}%",
+            current_symbol, current_funding_diff_ann
         );
 
-        sleep(Duration::from_secs(sleep_time)).await;
-    }
+        let new_op = get_first_op(&arbitrage_opportunities).await.unwrap();
+        let new_symbol = &new_op.symbol;
+        let new_funding_diff_ann = new_op.funding_diff * Decimal::from(24 * 365 * 100);
+        // let is_same_symbol =  current_symbol.map_or(false, |s| new_symbol == s);
 
-    if is_first_time || change_position {
-        let (_, _, min_available_balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
+        info!(
+            "Current best new op symbol: {:?}, funding diff ann: {:?}%",
+            new_symbol, new_funding_diff_ann
+        );
 
-        let arbitrage_opportunities = get_arbitrage_opportunities_from_markets(&markets_a, &markets_b).await;
-        let best_op = get_best_op(&arbitrage_opportunities).await;
+        let position_a = positions_a.iter().find(|p| p.symbol == *current_symbol.unwrap());
+        let position_b = positions_b.iter().find(|p| p.symbol == *current_symbol.unwrap());
 
-        if let Some(ArbitrageOpportunity {
-            symbol: _,
-            rate_a,
-            rate_b,
-            diff: _,
-            leverage_a: _,
-            leverage_b: _,
-            price_crossed: _,
-            bid_opportunity_price,
-            ask_opportunity_price,
-            market_a,
-            market_b,
-        }) = best_op
-        {
+        let market_a = position_a
+            .and_then(|pos| get_market_for_position(pos, &markets_a))
+            .unwrap();
+        let market_b = position_b
+            .and_then(|pos| get_market_for_position(pos, &markets_b))
+            .unwrap();
+
+        let (long_market, short_market) = if position_a.unwrap().side == PositionSide::Long {
+            (market_a, market_b)
+        } else {
+            (market_b, market_a)
+        };
+
+        // smth wrong kill all
+        if positions_a.len() != 1 && positions_b.len() != 1 {
+            info!("Something went wrong with positions, closing all positions");
+            close_positions_for_markets(&positions_a, &markets_a, operator_a, config)
+                .await
+                .unwrap_or_else(|e| {
+                    error!("Failed to close positions on A: {:?}", e);
+                });
+            close_positions_for_markets(&positions_b, &markets_b, operator_b, config)
+                .await
+                .unwrap_or_else(|e| {
+                    error!("Failed to close positions on B: {:?}", e);
+                });
+            return;
+        }
+
+        let exit_arb = Some(get_exit_arb_data(long_market.clone(), short_market.clone(), config));
+
+        if exit_arb.as_ref().unwrap().exit_arb_valid_after_fees {
+            info!("Our exit is profitable after fees, close position");
+            change_position = true;
+        } else if current_funding_diff_ann < Decimal::from(-10) {
             info!(
-                "Markets for arbitrage | Market {}: {:?} | Market {}: {:?}",
-                operator_a.get_exchange_info(),
-                market_a,
-                operator_b.get_exchange_info(),
-                market_b
+                "Current position funding ann is negative {}: change position",
+                current_funding_diff_ann
             );
+            change_position = true;
+        } else {
+            info!("Dont do anything funding positive, price not ready to exit");
+            change_position = false
+        }
 
-            let (amount, long_market, short_market, long_operator, short_operator) = calculate_trade_attributes(
-                rate_a,
-                rate_b,
-                &market_a,
-                &market_b,
-                operator_a,
-                operator_b,
-                min_available_balance.unwrap(),
-            );
+        info!(
+            "Trade Execution | Has Positions Open: {} | Change Position: {}",
+            has_positions_open, change_position
+        );
 
-            if let Err(e) = set_same_leverage(&market_a, &market_b, operator_a, operator_b).await {
-                error!("Failed to set leverage: {:?}", e);
-            }
+        if change_position {
+            info!("Can exit position profitably, or funding is to negative and we kill");
 
-            let (price_adjusted_long, _) =
-                get_adjusted_price_and_side(long_market, &PositionSide::Long, false, long_operator).await;
-            let (price_adjusted_short, _) =
-                get_adjusted_price_and_side(short_market, &PositionSide::Short, false, short_operator).await;
+            let exit_arb = exit_arb.as_ref().unwrap();
+            let long_exit_px = exit_arb.long_exit_px;
+            let short_exit_px = exit_arb.short_exit_px;
+
+            let long_operator = operator_map.get(&long_market.exchange).unwrap();
+            let short_operator = operator_map.get(&short_market.exchange).unwrap();
+
             info!(
-                "Amount: {}, Price Adjusted Short: {} Price Adjusted Long: {}, Bid Opportunity Price: {}, Ask Opportunity Price: {}",
-                amount, price_adjusted_short, price_adjusted_long, bid_opportunity_price, ask_opportunity_price
+                "Exit long {} with price: {} on {}",
+                current_symbol.as_ref().unwrap(),
+                long_exit_px,
+                long_operator.get_exchange_info()
+            );
+            info!(
+                "Exit short {} with price: {} on {}",
+                current_symbol.as_ref().unwrap(),
+                short_exit_px,
+                short_operator.get_exchange_info()
+            );
+            info!(
+                "EXIT: Spread between prices: {}, %spread {}",
+                long_exit_px - short_exit_px,
+                (long_exit_px - short_exit_px) / short_exit_px * Decimal::from(100)
             );
 
             match create_order(
-                short_operator,
-                &short_market,
+                *long_operator,
+                &long_market,
                 PositionSide::Short,
-                &amount,
-                &price_adjusted_short,
-                Some(false),
+                &position_a.unwrap().size,
+                &long_exit_px,
+                Some(true),
+            )
+            .await
+            {
+                Ok(order_result) => info!("Long order: {:?}", order_result),
+                Err(e) => error!("Long order failed: {:?}", e),
+            }
+
+            match create_order(
+                *short_operator,
+                &short_market,
+                PositionSide::Long,
+                &position_a.unwrap().size,
+                &short_exit_px,
+                Some(true),
             )
             .await
             {
                 Ok(order_result) => info!("Short order: {:?}", order_result),
                 Err(e) => error!("Short order failed: {:?}", e),
+            } 
+
+            let sleep_time = if env_config.mode == BotMode::Production {
+                5 * 60
+            } else {
+                5 * 60
+            };
+
+            info!("Sleeping for {} seconds to allow orders to fill and close", sleep_time);
+            info!(
+                "Next trade scheduled at: {:?}",
+                Utc::now() + Duration::from_secs(sleep_time)
+            );
+
+            sleep(Duration::from_secs(sleep_time)).await;
+        }
+    }
+
+    if !has_positions_open || change_position {
+        let (_, _, min_available_balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
+
+        let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, &config).await;
+        let first_op = get_first_op(&arbitrage_opportunities).await;
+
+        if first_op.is_none() {
+            error!("No arbitrage opportunities available! Wait for next session!");
+            return;
+        }
+
+        if first_op.is_some() {
+            let op = first_op.unwrap();
+            info!(
+                "Markets for arbitrage | Long on {} | Short on {}",
+                op.long_market.exchange, op.short_market.exchange,
+            );
+
+            let long_operator = operator_map.get(&op.long_market.exchange).unwrap();
+            let short_operator = operator_map.get(&op.short_market.exchange).unwrap();
+            let qty = get_order_qty(&op.long_market, &op.short_market, min_available_balance.unwrap());
+
+            if let Err(e) = set_same_leverage(&op.long_market, &op.short_market, *long_operator, *short_operator).await
+            {
+                error!("Failed to set leverage: {:?}", e);
             }
 
+            let entry_arbitrage = op.entry_arbitrage.as_ref().unwrap();
+            let long_entry_px = entry_arbitrage.long_entry_px;
+            let short_entry_px = entry_arbitrage.short_entry_px;
+
+            info!(
+                "Long with price: {} on {}",
+                long_entry_px,
+                long_operator.get_exchange_info()
+            );
+            info!(
+                "Short with price: {} on {}",
+                short_entry_px,
+                short_operator.get_exchange_info()
+            );
+            info!(
+                "Spread between prices: {}, %spread {}",
+                long_entry_px - short_entry_px,
+                (long_entry_px - short_entry_px) / short_entry_px * Decimal::from(100)
+            );
+
             match create_order(
-                long_operator,
-                &long_market,
+                *long_operator,
+                &op.long_market,
                 PositionSide::Long,
-                &amount,
-                &price_adjusted_long,
+                &qty,
+                &long_entry_px,
                 Some(false),
             )
             .await
@@ -247,8 +349,20 @@ async fn trade(fetcher_a: &dyn Fetcher, fetcher_b: &dyn Fetcher, operator_a: &dy
                 Ok(order_result) => info!("Long order: {:?}", order_result),
                 Err(e) => error!("Long order failed: {:?}", e),
             }
-        } else {
-            error!("No arbitrage opportunities available.");
+
+            match create_order(
+                *short_operator,
+                &op.short_market,
+                PositionSide::Short,
+                &qty,
+                &short_entry_px,
+                Some(false),
+            )
+            .await
+            {
+                Ok(order_result) => info!("Short order: {:?}", order_result),
+                Err(e) => error!("Short order failed: {:?}", e),
+            }
         }
     }
 }
@@ -309,127 +423,186 @@ async fn get_markets(fetcher: &dyn Fetcher) -> Vec<MarketInfo> {
     markets
 }
 
-async fn get_best_op(arb_ops: &[ArbitrageOpportunity]) -> Option<ArbitrageOpportunity> {
+async fn get_first_op(arb_ops: &[ArbitrageOpportunity]) -> Option<ArbitrageOpportunity> {
     if let Some(op) = arb_ops.first() {
+        let entry_arbitrage = op.entry_arbitrage.as_ref().unwrap();
+
         info!(
-            "Best funding op: Symbol: {}, Market A Rate: {}, Market B Rate: {}, Difference: {}, Market A Leverage: {}, Market B Leverage: {}, Price Crossed: {} Bid Opportunity Price: {}, Ask Opportunity Price: {}",
+            "First funding op: Symbol: {}, Long Exchange: {}, Short Exchange: {}, Funding Diff: {}, Long Entry Px (w/fees): {}, Short Entry Px (w/fees): {}, Arb Valid Before Fees: {}, Arb Valid After Fees: {}",
             op.symbol,
-            op.rate_a,
-            op.rate_b,
-            op.diff * Decimal::from(24 * 365 * 100),
-            op.leverage_a,
-            op.leverage_b,
-            op.price_crossed,
-            op.bid_opportunity_price,
-            op.ask_opportunity_price
+            op.long_market.exchange,
+            op.short_market.exchange,
+            op.funding_diff * Decimal::from(24 * 365 * 100),
+            entry_arbitrage.long_entry_px_wfees,
+            entry_arbitrage.short_entry_px_wfees,
+            entry_arbitrage.entry_arb_valid_before_fees,
+            entry_arbitrage.entry_arb_valid_after_fees
         );
     }
 
-    let best_price_crossed_opportunity = arb_ops.iter().find(|op| op.price_crossed).cloned();
+    let best_arbitrage_op = arb_ops
+        .iter()
+        .find(|op| op.entry_arbitrage.as_ref().unwrap().entry_arb_valid_after_fees)
+        .cloned();
 
-    if let Some(op) = best_price_crossed_opportunity.clone() {
+    if let Some(op) = best_arbitrage_op.clone() {
+        let entry_arbitrage = op.entry_arbitrage.unwrap();
+
         info!(
-            "Best price crossed op: Symbol: {}, Market A Rate: {}, Market B Rate: {}, Difference: {}, Market A Leverage: {}, Market B Leverage: {}, Price Crossed: {} Bid Opportunity Price: {}, Ask Opportunity Price: {}",
+            "First valid arbitrage op: Symbol: {}, Long Exchange: {}, Short Exchange: {}, Funding Diff: {}, Long Entry Px (w/fees): {}, Short Entry Px (w/fees): {}, Arb Valid Before Fees: {}, Arb Valid After Fees: {}",
             op.symbol,
-            op.rate_a,
-            op.rate_b,
-            op.diff * Decimal::from(24 * 365 * 100),
-            op.leverage_a,
-            op.leverage_b,
-            op.price_crossed,
-            op.bid_opportunity_price,
-            op.ask_opportunity_price
+            op.long_market.exchange,
+            op.short_market.exchange,
+            op.funding_diff * Decimal::from(24 * 365 * 100),
+            entry_arbitrage.long_entry_px_wfees,
+            entry_arbitrage.short_entry_px_wfees,
+            entry_arbitrage.entry_arb_valid_before_fees,
+            entry_arbitrage.entry_arb_valid_after_fees
         );
     }
 
-    best_price_crossed_opportunity
+    best_arbitrage_op
 }
 
-async fn get_arbitrage_opportunities_from_markets(
+async fn calculate_arbitrage_opportunities(
     markets_a: &[MarketInfo],
     markets_b: &[MarketInfo],
+    config: &BotJsonConfig,
 ) -> Vec<ArbitrageOpportunity> {
-    let mut arbitrage_opportunities = Vec::new();
+    let exclude_tickers = ["MEGA", "MON"];
+    let mut opportunities = Vec::new();
 
     for market_a in markets_a {
+        if exclude_tickers.contains(&market_a.symbol.as_str()) {
+            continue;
+        }
         if let Some(market_b) = markets_b.iter().find(|r| r.symbol == market_a.symbol) {
-            let diff = (market_a.funding_rate - market_b.funding_rate).abs();
+            let funding_diff = (market_a.funding_rate - market_b.funding_rate).abs();
 
-            // op specific things
-            let (price_crossed, (bid_opportunity_price, ask_opportunity_price)) =
-                if market_a.funding_rate > market_b.funding_rate {
-                    (
-                        market_a.ask_price > market_b.bid_price,
-                        (market_b.bid_price, market_a.ask_price),
-                    )
-                } else {
-                    (
-                        market_b.ask_price > market_a.bid_price,
-                        (market_a.bid_price, market_b.ask_price),
-                    )
-                };
+            // get funding diff
+            let (long_market, short_market) = if market_a.funding_rate < market_b.funding_rate {
+                (market_a, market_b)
+            } else {
+                (market_b, market_a)
+            };
 
-            arbitrage_opportunities.push(ArbitrageOpportunity {
+            let entry_arb = Some(get_entry_arb_data(long_market.clone(), short_market.clone(), config));
+            opportunities.push(ArbitrageOpportunity {
                 symbol: market_a.symbol.clone(),
-                rate_a: market_a.funding_rate,
-                rate_b: market_b.funding_rate,
-                diff,
-                leverage_a: market_a.leverage,
-                leverage_b: market_b.leverage,
-                price_crossed,
-                bid_opportunity_price,
-                ask_opportunity_price,
-                market_a: market_a.clone(),
-                market_b: market_b.clone(),
+                long_market: long_market.clone(),
+                short_market: short_market.clone(),
+                entry_arbitrage: entry_arb,
+                exit_arbitrage: None,
+                funding_diff,
             });
         }
     }
 
-    arbitrage_opportunities.sort_by(|a, b| b.diff.cmp(&a.diff));
+    // Sort by best funding diff, descending
+    opportunities.sort_by(|a, b| b.funding_diff.cmp(&a.funding_diff));
 
-    info!("Found {} arbitrage opportunities", arbitrage_opportunities.len());
+    info!("Found {} arbitrage opportunities", opportunities.len());
 
-    let exclude_tickers = vec!["MEGA", "MON"];
-
-    arbitrage_opportunities
-        .into_iter()
-        .filter(|op| !exclude_tickers.contains(&op.symbol.as_str()))
-        .collect::<Vec<_>>()
+    opportunities
 }
 
-fn calculate_trade_attributes<'a>(
-    rate_a: Decimal,
-    rate_b: Decimal,
-    market_a: &'a MarketInfo,
-    market_b: &'a MarketInfo,
-    operator_a: &'a dyn Operator,
-    operator_b: &'a dyn Operator,
-    min_available_balance: Decimal,
-) -> (
-    Decimal,
-    &'a MarketInfo,
-    &'a MarketInfo,
-    &'a dyn Operator,
-    &'a dyn Operator,
-) {
-    let (long_market, short_market, long_operator, short_operator) = if rate_a < rate_b {
-        (market_a, market_b, operator_a, operator_b)
-    } else {
-        (market_b, market_a, operator_b, operator_a)
-    };
+fn get_entry_arb_data(market_long: MarketInfo, market_short: MarketInfo, config: &BotJsonConfig) -> EntryArbitrage {
+    let long_entry_px = market_long.ask_price; // this is not mid, this is next price a seller is willing to sell to us
+    let short_entry_px = market_short.bid_price; // this is not mid, this is next price a buyer is willing to buy from us
 
+    let long_entry_px_wfees = long_entry_px
+        * (Decimal::ONE
+            + BotJsonConfig::get_taker_fee(market_long.exchange)
+            + BotJsonConfig::get_entry_offset(config, market_long.exchange, true));
+    let short_entry_px_wfees = short_entry_px
+        * (Decimal::ONE
+            + BotJsonConfig::get_taker_fee(market_short.exchange)
+            + BotJsonConfig::get_entry_offset(config, market_short.exchange, false));
+
+    let entry_arb_valid_before_fees = long_entry_px < short_entry_px;
+
+    let entry_arb_valid_after_fees = long_entry_px_wfees < short_entry_px_wfees;
+    if entry_arb_valid_before_fees {
+        info!(
+            "ENTRY ARB VALID BEFORE FEES: {} | Long Market: {} | Short Market: {} | Long Entry Price: {} | Short Entry Price: {} | spread {} | spread% {}% | my check: {}  my check with fees: {} long_entry_px_wfees {} short_entry_px_wfees {}",
+            market_long.symbol,
+            market_long.exchange,
+            market_short.exchange,
+            long_entry_px,
+            short_entry_px,
+            short_entry_px - long_entry_px,
+            ((short_entry_px - long_entry_px) / short_entry_px) * Decimal::from(100),
+            long_entry_px < short_entry_px,
+            entry_arb_valid_after_fees,
+            long_entry_px_wfees,
+            short_entry_px_wfees
+        );
+    }
+
+    EntryArbitrage {
+        long_entry_px,
+        short_entry_px,
+        long_entry_px_wfees,
+        short_entry_px_wfees,
+        entry_arb_valid_before_fees,
+        entry_arb_valid_after_fees,
+    }
+}
+
+fn get_exit_arb_data(market_long: MarketInfo, market_short: MarketInfo, config: &BotJsonConfig) -> ExitArbitrage {
+    let long_exit_px = market_long.bid_price; // this is not mid, this is next price a seller is willing to buy from us
+    let short_exit_px = market_short.ask_price; // this is not mid, this is next price a buyer is willing to sell to us
+
+    let long_exit_px_wfees = long_exit_px
+        * (Decimal::ONE
+            + BotJsonConfig::get_taker_fee(market_long.exchange)
+            + BotJsonConfig::get_exit_offset(config, market_long.exchange, false));
+    let short_exit_px_wfees = short_exit_px
+        * (Decimal::ONE
+            + BotJsonConfig::get_taker_fee(market_short.exchange)
+            + BotJsonConfig::get_exit_offset(config, market_short.exchange, true));
+
+    let exit_arb_valid_before_fees = long_exit_px > short_exit_px;
+
+    let exit_arb_valid_after_fees = long_exit_px_wfees > short_exit_px_wfees;
+    info!(
+        "EXIT ARB DATA BEFORE FEES: {} | Long Market: {} | Short Market: {} | Long Exit Price: {} | Short Exit Price: {} | spread {} | spread% {}% | my check: {}  my check with fees: {} long_exit_px_wfees {} short_exit_px_wfees {}",
+        market_long.symbol,
+        market_long.exchange,
+        market_short.exchange,
+        long_exit_px,
+        short_exit_px,
+        short_exit_px - long_exit_px,
+        ((short_exit_px - long_exit_px) / short_exit_px) * Decimal::from(100),
+        long_exit_px > short_exit_px,
+        exit_arb_valid_after_fees,
+        long_exit_px_wfees,
+        short_exit_px_wfees,
+    );
+
+    ExitArbitrage {
+        long_exit_px,
+        short_exit_px,
+        long_exit_px_wfees,
+        short_exit_px_wfees,
+        exit_arb_valid_before_fees,
+        exit_arb_valid_after_fees,
+    }
+}
+
+fn get_order_qty(long_market: &MarketInfo, short_market: &MarketInfo, min_available_balance: Decimal) -> Decimal {
     let leverage = long_market.leverage.min(short_market.leverage);
 
     let max_amount_long = (min_available_balance * leverage) / long_market.ask_price;
     let max_amount_short = (min_available_balance * leverage) / short_market.bid_price;
 
     info!(
-        "Trade Sizes Symbol: {} {}| Long Market {}: Decimals {} | Short Market {}: Decimals {}",
+        "Qty calc for Symbol: {} {}| Long Market {}: No. decimals {} | Short Market {}: No. decimals {}",
         long_market.symbol,
         short_market.symbol,
-        long_operator.get_exchange_info(),
+        long_market.exchange,
         long_market.sz_decimals,
-        short_operator.get_exchange_info(),
+        short_market.exchange,
         short_market.sz_decimals
     );
 
@@ -454,49 +627,38 @@ fn calculate_trade_attributes<'a>(
         max_amount, amount, quantized_amount
     );
 
-    (
-        quantized_amount,
-        long_market,
-        short_market,
-        long_operator,
-        short_operator,
-    )
+    quantized_amount
 }
 
 async fn set_same_leverage(
-    market_a: &MarketInfo,
-    market_b: &MarketInfo,
-    operator_a: &dyn Operator,
-    operator_b: &dyn Operator,
+    long_market: &MarketInfo,
+    short_market: &MarketInfo,
+    long_operator: &dyn Operator,
+    short_operator: &dyn Operator,
 ) -> PointsBotResult<()> {
-    let min_leverage = market_a.leverage.min(market_b.leverage);
+    let min_leverage = long_market.leverage.min(short_market.leverage);
 
-    if market_a.leverage > min_leverage {
-        operator_a
-            .change_leverage(market_a.clone(), min_leverage)
+    if long_market.leverage > min_leverage {
+        long_operator
+            .change_leverage(long_market.clone(), min_leverage)
             .await
             .map_err(|e| e)
     } else {
-        operator_b
-            .change_leverage(market_b.clone(), min_leverage)
+        short_operator
+            .change_leverage(short_market.clone(), min_leverage)
             .await
             .map_err(|e| e)
     }
 }
 
-async fn get_adjusted_price_and_side(
-    market: &MarketInfo,
-    side: &PositionSide,
-    close: bool,
-    operator: &dyn Operator,
-) -> (Decimal, PositionSide) {
-    let entry_offset = match operator.get_exchange_info() {
+async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, close: bool) -> (Decimal, PositionSide) {
+    /* let entry_offset = match operator.get_exchange_info() {
         ExchangeName::Hyperliquid => Decimal::from_f64(0.0).unwrap(),
         ExchangeName::Extended => Decimal::from_f64(0.0).unwrap(),
         ExchangeName::Lighter => Decimal::from_f64(0.0).unwrap(),
     };
 
-    /* let exit_offset = match operator.get_exchange_info() {
+    let exit_offset = match operator.get_exchange_info() {
         ExchangeName::Hyperliquid => Decimal::from_f64(0.0).unwrap(),
         ExchangeName::Extended => Decimal::from_f64(0.0).unwrap(),
         ExchangeName::Lighter => Decimal::from_f64(0.0).unwrap()
@@ -505,6 +667,7 @@ async fn get_adjusted_price_and_side(
     let scale_ask = market.ask_price.scale();
     let scale_bid = market.bid_price.scale();
 
+    let entry_offset = Decimal::from_f64(0.000).unwrap();
     let exit_offset = Decimal::from_f64(0.000).unwrap();
 
     match side {
@@ -568,10 +731,12 @@ async fn create_order(
     Ok(result)
 }
 
-async fn close_positions_for_market(
+// kill all
+async fn close_positions_for_markets(
     positions: &[Position],
     markets: &[MarketInfo],
     operator: &dyn Operator,
+    config: &BotJsonConfig,
 ) -> anyhow::Result<()> {
     let label = operator.get_exchange_info();
 
@@ -588,7 +753,7 @@ async fn close_positions_for_market(
             continue;
         };
 
-        let (price_adjusted, side) = get_adjusted_price_and_side(market, &position.side, true, operator).await;
+        let (price_adjusted, side) = get_adjusted_price_and_side(market, &position.side, true).await;
 
         if let Err(e) = create_order(
             operator,
@@ -609,20 +774,6 @@ async fn close_positions_for_market(
     Ok(())
 }
 
-// two params, funding and price
-// if funding bad and price good
-// if funding good and price not good
-// if both good
-// if both bad
-
-// check each hour
-// if price is good and (funding is not 50% than next op dont close and price is good of the next pos)
-// if price is good and (funding is not that good than dont close and price is not that good)
-// if price is bad and funding is positive (dont do anything)
-// if price is bad and funding is negative (close pos)
-
-// cene
-// cene z trading feejom
-// cene z moji offsetom
-
-// lighter cene fuckery
+fn get_market_for_position<'a>(position: &Position, markets: &'a [MarketInfo]) -> Option<&'a MarketInfo> {
+    markets.iter().find(|m| m.symbol == position.symbol)
+}

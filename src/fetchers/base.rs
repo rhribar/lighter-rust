@@ -40,6 +40,7 @@ pub struct Position {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketInfo {
+    pub exchange: ExchangeName,
     pub exchange_id: Option<u64>,
     pub symbol: String,
     pub base_asset: String,

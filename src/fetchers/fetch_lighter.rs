@@ -165,6 +165,7 @@ impl Fetcher for FetcherLighter {
                 let symbol = AssetMapping::map_ticker(ExchangeName::Lighter, &b.symbol, TickerDirection::ToCanonical)
                     .unwrap_or_else(|| b.symbol.clone());
                 MarketInfo {
+                    exchange: ExchangeName::Lighter,
                     exchange_id: b.exchange_id,
                     symbol: symbol.clone(),
                     base_asset: symbol.clone(),

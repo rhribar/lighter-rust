@@ -5,6 +5,7 @@ use crate::{
 };
 use ethers::signers::LocalWallet;
 use log::info;
+use rust_decimal::{prelude::FromPrimitive, Decimal};
 use serde::{Deserialize, Serialize};
 use std::{env, str::FromStr};
 
@@ -37,6 +38,8 @@ pub struct ExtendedConfig {
     pub stark_private_key: String,
     pub stark_public_key: String,
     pub vault_id: u64,
+    pub entry_offset: Decimal,
+    pub exit_offset: Decimal,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -44,6 +47,8 @@ pub struct LighterConfig {
     pub api_key: String,
     pub api_key_index: u32,
     pub account_index: u32,
+    pub entry_offset: Decimal,
+    pub exit_offset: Decimal,
 }
 
 pub struct BotConfig {
@@ -139,6 +144,46 @@ impl BotJsonConfig {
                 Box::new(FetcherHyperliquid::new(&config_json)),
                 create_operator_hyperliquid(wallet.clone()).await,
             ),
+        }
+    }
+
+    pub fn get_taker_fee(exchange: ExchangeName) -> Decimal {
+        match exchange {
+            ExchangeName::Extended => Decimal::from_f64(0.000225).unwrap(), // 0.0225% fee
+            ExchangeName::Lighter => Decimal::from_f64(0.0002).unwrap(),    // 0.02% fee
+            ExchangeName::Hyperliquid => Decimal::from_f64(0.00045).unwrap(), // 0.045% fee
+        }
+    }
+
+    pub fn get_entry_offset(&self, exchange: ExchangeName, negate: bool) -> Decimal {
+        match exchange {
+            ExchangeName::Extended => {
+                self.extended
+                    .as_ref()
+                    .map_or(Decimal::ZERO, |c| if negate { -c.entry_offset } else { c.entry_offset })
+            }
+            ExchangeName::Lighter => {
+                self.lighter
+                    .as_ref()
+                    .map_or(Decimal::ZERO, |c| if negate { -c.entry_offset } else { c.entry_offset })
+            }
+            ExchangeName::Hyperliquid => Decimal::ZERO,
+        }
+    }
+
+    pub fn get_exit_offset(&self, exchange: ExchangeName, negate: bool) -> Decimal {
+        match exchange {
+            ExchangeName::Extended => {
+                self.extended
+                    .as_ref()
+                    .map_or(Decimal::ZERO, |c| if negate { -c.exit_offset } else { c.exit_offset })
+            }
+            ExchangeName::Lighter => {
+                self.lighter
+                    .as_ref()
+                    .map_or(Decimal::ZERO, |c| if negate { -c.exit_offset } else { c.exit_offset })
+            }
+            ExchangeName::Hyperliquid => Decimal::ZERO,
         }
     }
 }
