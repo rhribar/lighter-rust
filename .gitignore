@@ -3,3 +3,4 @@
 .specstory
 .env-production
 config.json
+config-production.json
