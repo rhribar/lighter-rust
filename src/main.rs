@@ -181,7 +181,7 @@ async fn trade(
         };
 
         // smth wrong kill all
-        if positions_a.len() != 1 && positions_b.len() != 1 {
+        if positions_a.len() != 1 || positions_b.len() != 1 {
             info!("Something went wrong with positions, closing all positions");
             close_positions_for_markets(&positions_a, &markets_a, operator_a, config)
                 .await
