@@ -154,15 +154,15 @@ async fn trade(
             current_symbol, current_funding_diff_ann
         );
 
-        let new_op = get_first_op(&arbitrage_opportunities).await.unwrap();
-        let new_symbol = &new_op.symbol;
-        let new_funding_diff_ann = new_op.funding_diff * Decimal::from(24 * 365 * 100);
-        // let is_same_symbol =  current_symbol.map_or(false, |s| new_symbol == s);
+        if let Some(new_op) = get_first_op(&arbitrage_opportunities).await {
+            let new_symbol = &new_op.symbol;
+            let new_funding_diff_ann = new_op.funding_diff * Decimal::from(24 * 365 * 100);
 
-        info!(
-            "Current best new op symbol: {:?}, funding diff ann: {:?}%",
-            new_symbol, new_funding_diff_ann
-        );
+            info!(
+                "New ops exists symbol: {:?}, funding diff ann: {:?}%",
+                new_symbol, new_funding_diff_ann
+            );
+        }
 
         let position_a = positions_a.iter().find(|p| p.symbol == *current_symbol.unwrap());
         let position_b = positions_b.iter().find(|p| p.symbol == *current_symbol.unwrap());
@@ -290,14 +290,27 @@ async fn trade(
     }
 
     if !has_positions_open || change_position {
-        let (_, _, min_available_balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
+        let mut min_available_balance = None;
+        let mut first_op = None;
+        let max_attempts = 5;
 
-        let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, &config).await;
-        let first_op = get_first_op(&arbitrage_opportunities).await;
+        for _ in 0..max_attempts {
+            let (_, _, balance, markets_a, markets_b) = get_trading_data(fetcher_a, fetcher_b).await;
+            let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, &config).await;
+            let op = get_first_op(&arbitrage_opportunities).await;
 
-        if first_op.is_none() {
-            error!("No arbitrage opportunities available! Wait for next session!");
-            return;
+            min_available_balance = balance;
+            first_op = op.clone();
+
+            if first_op.is_some() {
+                info!("Arbitrage opportunity found, proceeding with trade {:?}", first_op);
+                break;
+            } else {
+                info!("No arbitrage opportunities found, retrying...");
+            }
+
+            info!("Waiting before next arb check...");
+            sleep(Duration::from_secs(30)).await;
         }
 
         if first_op.is_some() {
