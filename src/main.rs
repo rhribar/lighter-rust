@@ -181,7 +181,7 @@ async fn trade(
         };
 
         // smth wrong kill all
-        if positions_a.len() != 1 && positions_b.len() != 1 {
+        if positions_a.len() != 1 || positions_b.len() != 1 {
             info!("Something went wrong with positions, closing all positions");
             close_positions_for_markets(&positions_a, &markets_a, operator_a, config)
                 .await
@@ -638,17 +638,14 @@ async fn set_same_leverage(
 ) -> PointsBotResult<()> {
     let min_leverage = long_market.leverage.min(short_market.leverage);
 
-    if long_market.leverage > min_leverage {
-        long_operator
-            .change_leverage(long_market.clone(), min_leverage)
-            .await
-            .map_err(|e| e)
-    } else {
-        short_operator
-            .change_leverage(short_market.clone(), min_leverage)
-            .await
-            .map_err(|e| e)
-    }
+    let res_long = long_operator
+        .change_leverage(long_market.clone(), min_leverage)
+        .await;
+    let res_short = short_operator
+        .change_leverage(short_market.clone(), min_leverage)
+        .await;
+
+    res_long.and(res_short).map_err(|e| e)
 }
 
 async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, close: bool) -> (Decimal, PositionSide) {
