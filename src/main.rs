@@ -638,17 +638,14 @@ async fn set_same_leverage(
 ) -> PointsBotResult<()> {
     let min_leverage = long_market.leverage.min(short_market.leverage);
 
-    if long_market.leverage > min_leverage {
-        long_operator
-            .change_leverage(long_market.clone(), min_leverage)
-            .await
-            .map_err(|e| e)
-    } else {
-        short_operator
-            .change_leverage(short_market.clone(), min_leverage)
-            .await
-            .map_err(|e| e)
-    }
+    let res_long = long_operator
+        .change_leverage(long_market.clone(), min_leverage)
+        .await;
+    let res_short = short_operator
+        .change_leverage(short_market.clone(), min_leverage)
+        .await;
+
+    res_long.and(res_short).map_err(|e| e)
 }
 
 async fn get_adjusted_price_and_side(market: &MarketInfo, side: &PositionSide, close: bool) -> (Decimal, PositionSide) {
