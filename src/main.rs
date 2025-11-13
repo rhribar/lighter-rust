@@ -516,7 +516,7 @@ fn get_entry_arb_data(market_long: MarketInfo, market_short: MarketInfo, config:
             + BotJsonConfig::get_entry_offset(config, market_long.exchange, true));
     let short_entry_px_wfees = short_entry_px
         * (Decimal::ONE
-            + BotJsonConfig::get_taker_fee(market_short.exchange)
+            - BotJsonConfig::get_taker_fee(market_short.exchange)
             + BotJsonConfig::get_entry_offset(config, market_short.exchange, false));
 
     let entry_arb_valid_before_fees = long_entry_px < short_entry_px;
@@ -555,7 +555,7 @@ fn get_exit_arb_data(market_long: MarketInfo, market_short: MarketInfo, config: 
 
     let long_exit_px_wfees = long_exit_px
         * (Decimal::ONE
-            + BotJsonConfig::get_taker_fee(market_long.exchange)
+            - BotJsonConfig::get_taker_fee(market_long.exchange)
             + BotJsonConfig::get_exit_offset(config, market_long.exchange, false));
     let short_exit_px_wfees = short_exit_px
         * (Decimal::ONE
