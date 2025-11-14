@@ -635,13 +635,12 @@ fn get_entry_arb_data(market_long: MarketInfo, market_short: MarketInfo, config:
     let long_entry_px = market_long.ask_price; // this is not mid, this is next price a seller is willing to sell to us
     let short_entry_px = market_short.bid_price; // this is not mid, this is next price a buyer is willing to buy from us
 
-    let long_entry_px_wfees = long_entry_px
-        * (Decimal::ONE
-            + BotJsonConfig::get_taker_fee(market_long.exchange)
-            + BotJsonConfig::get_entry_offset(config, market_long.exchange, true));
-    let short_entry_px_wfees = short_entry_px
-        * (Decimal::ONE - BotJsonConfig::get_taker_fee(market_short.exchange)
-            + BotJsonConfig::get_entry_offset(config, market_short.exchange, false));
+    let long_entry_px = long_entry_px * (Decimal::ONE - BotJsonConfig::get_exit_offset(config, market_long.exchange)); // long entry we want to buy cheaper
+    let short_entry_px =
+        short_entry_px * (Decimal::ONE + BotJsonConfig::get_exit_offset(config, market_short.exchange)); // short entry we want to sell higher
+
+    let long_entry_px_wfees = long_entry_px * (Decimal::ONE + BotJsonConfig::get_taker_fee(market_long.exchange));
+    let short_entry_px_wfees = short_entry_px * (Decimal::ONE - BotJsonConfig::get_taker_fee(market_short.exchange));
 
     let entry_arb_valid_before_fees = long_entry_px < short_entry_px;
 
@@ -684,13 +683,11 @@ fn get_exit_arb_data(market_long: MarketInfo, market_short: MarketInfo, config: 
     let long_exit_px = market_long.bid_price; // this is not mid, this is next price a seller is willing to buy from us
     let short_exit_px = market_short.ask_price; // this is not mid, this is next price a buyer is willing to sell to us
 
-    let long_exit_px_wfees = long_exit_px
-        * (Decimal::ONE - BotJsonConfig::get_taker_fee(market_long.exchange)
-            + BotJsonConfig::get_exit_offset(config, market_long.exchange, false));
-    let short_exit_px_wfees = short_exit_px
-        * (Decimal::ONE
-            + BotJsonConfig::get_taker_fee(market_short.exchange)
-            + BotJsonConfig::get_exit_offset(config, market_short.exchange, true));
+    let long_exit_px = long_exit_px * (Decimal::ONE + BotJsonConfig::get_exit_offset(config, market_long.exchange)); // long exit we want to sell higher
+    let short_exit_px = short_exit_px * (Decimal::ONE - BotJsonConfig::get_exit_offset(config, market_short.exchange)); // short exit we want to buy cheaper, because its better for us (for pnl)
+
+    let long_exit_px_wfees = long_exit_px * (Decimal::ONE - BotJsonConfig::get_taker_fee(market_long.exchange));
+    let short_exit_px_wfees = short_exit_px * (Decimal::ONE + BotJsonConfig::get_taker_fee(market_short.exchange));
 
     let exit_arb_valid_before_fees = long_exit_px > short_exit_px;
 

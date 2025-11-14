@@ -155,34 +155,18 @@ impl BotJsonConfig {
         }
     }
 
-    pub fn get_entry_offset(&self, exchange: ExchangeName, negate: bool) -> Decimal {
+    pub fn get_entry_offset(&self, exchange: ExchangeName) -> Decimal {
         match exchange {
-            ExchangeName::Extended => {
-                self.extended
-                    .as_ref()
-                    .map_or(Decimal::ZERO, |c| if negate { -c.entry_offset } else { c.entry_offset })
-            }
-            ExchangeName::Lighter => {
-                self.lighter
-                    .as_ref()
-                    .map_or(Decimal::ZERO, |c| if negate { -c.entry_offset } else { c.entry_offset })
-            }
+            ExchangeName::Extended => self.extended.as_ref().map_or(Decimal::ZERO, |c| c.entry_offset),
+            ExchangeName::Lighter => self.lighter.as_ref().map_or(Decimal::ZERO, |c| c.entry_offset),
             ExchangeName::Hyperliquid => Decimal::ZERO,
         }
     }
 
-    pub fn get_exit_offset(&self, exchange: ExchangeName, negate: bool) -> Decimal {
+    pub fn get_exit_offset(&self, exchange: ExchangeName) -> Decimal {
         match exchange {
-            ExchangeName::Extended => {
-                self.extended
-                    .as_ref()
-                    .map_or(Decimal::ZERO, |c| if negate { -c.exit_offset } else { c.exit_offset })
-            }
-            ExchangeName::Lighter => {
-                self.lighter
-                    .as_ref()
-                    .map_or(Decimal::ZERO, |c| if negate { -c.exit_offset } else { c.exit_offset })
-            }
+            ExchangeName::Extended => self.extended.as_ref().map_or(Decimal::ZERO, |c| c.exit_offset),
+            ExchangeName::Lighter => self.lighter.as_ref().map_or(Decimal::ZERO, |c| c.exit_offset),
             ExchangeName::Hyperliquid => Decimal::ZERO,
         }
     }
