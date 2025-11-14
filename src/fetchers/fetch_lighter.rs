@@ -46,6 +46,7 @@ struct ApiPosition {
     avg_entry_price: String,
     unrealized_pnl: String,
     liquidation_price: String,
+    total_funding_paid_out: Option<String>,
 }
 
 #[derive(Debug)]
@@ -116,7 +117,9 @@ impl Fetcher for FetcherLighter {
                         unrealized_pnl: Decimal::from_str(&p.unrealized_pnl).unwrap_or(Decimal::ZERO),
                         margin_used: Decimal::ZERO,
                         liquidation_price: Decimal::from_str(&p.liquidation_price).ok(),
-                        cum_funding: None,
+                        cum_funding: p.total_funding_paid_out
+                            .as_deref()
+                            .and_then(|s| Decimal::from_str(s).ok()),
                     })
                 }
             })

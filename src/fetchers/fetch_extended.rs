@@ -4,6 +4,7 @@ use crate::{
     TickerDirection,
 };
 use async_trait::async_trait;
+use log::info;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::{collections::HashMap, str::FromStr};
@@ -42,6 +43,8 @@ struct ExtendedPositionData {
     entry_price: String,
     #[serde(rename = "unrealisedPnl")]
     unrealized_pnl: String,
+    #[serde(rename = "realisedPnl")]
+    realized_pnl: String,
     #[serde(rename = "liquidationPrice")]
     liquidation_price: String,
 }
@@ -114,6 +117,16 @@ impl FetcherExtended {
             "SHORT" => PositionSide::Short,
             _ => return None,
         };
+
+        let cum_funding = parse_decimal(&pos.realized_pnl).ok()?
+                    + parse_decimal(&pos.entry_price).ok()?
+                        * parse_decimal(&pos.size).ok()?
+                        * BotJsonConfig::get_taker_fee(ExchangeName::Extended);
+
+        info!("Calculated cumulative funding: cum_funding={} realized_pnl={} fees={}", cum_funding, &pos.realized_pnl, parse_decimal(&pos.entry_price).ok()?
+                        * parse_decimal(&pos.size).ok()?
+                        * BotJsonConfig::get_taker_fee(ExchangeName::Extended));
+
         Some(Position {
             symbol: AssetMapping::map_ticker(ExchangeName::Extended, &pos.market, TickerDirection::ToCanonical)
                 .unwrap_or_else(|| pos.market.clone()),
@@ -123,7 +136,7 @@ impl FetcherExtended {
             unrealized_pnl: parse_decimal(&pos.unrealized_pnl).ok()?,
             margin_used: parse_decimal(&pos.margin).ok()?,
             liquidation_price: parse_decimal(&pos.liquidation_price).ok(),
-            cum_funding: None,
+            cum_funding: Some(cum_funding),
         })
     }
 }

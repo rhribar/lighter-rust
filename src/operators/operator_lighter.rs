@@ -66,19 +66,30 @@ impl Operator for OperatorLighter {
 
     async fn change_leverage(&self, market: MarketInfo, leverage: Decimal) -> PointsBotResult<()> {
         let lev = leverage.to_u16().unwrap_or(1);
-
         let exchange_id_u8 = market.exchange_id.unwrap_or(0) as u8;
-        let res = self.client.update_leverage(exchange_id_u8, lev, 0).await;
-        match res {
-            Ok(val) => {
-                info!("Leverage updated: {}", val);
-                Ok(())
+        let mut last_err: Option<PointsBotError> = None;
+
+        for attempt in 1..=10 {
+            let res = self.client.update_leverage(exchange_id_u8, lev, 0).await;
+            match res {
+                Ok(val) => {
+                    info!("Leverage updated: {}", val);
+                    return Ok(());
+                }
+                Err(e) => {
+                    info!("Attempt {}: Leverage update failed, retrying...", attempt);
+                    last_err = Some(PointsBotError::Unknown {
+                        msg: format!("SDK update_leverage error: {e}"),
+                        source: None,
+                    });
+                    continue;
+                }
             }
-            Err(e) => Err(PointsBotError::Unknown {
-                msg: format!("SDK update_leverage error: {e}"),
-                source: None,
-            }),
         }
+        Err(last_err.unwrap_or_else(|| PointsBotError::Unknown {
+            msg: "Leverage update failed after retries".to_string(),
+            source: None,
+        }))
     }
 }
 
