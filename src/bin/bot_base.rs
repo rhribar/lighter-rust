@@ -177,13 +177,6 @@ async fn trade(
                 (position_b, position_a, &markets_b, &markets_b)
             };
 
-        let long_market = position_long
-            .and_then(|pos| get_market_for_position(pos, &markets_long))
-            .unwrap();
-        let short_market = position_short
-            .and_then(|pos| get_market_for_position(pos, &markets_short))
-            .unwrap();
-
         // smth wrong kill all, circuit out
         if positions_a.len() != 1 || positions_b.len() != 1 {
             info!("Something went wrong with positions, closing all positions");
@@ -199,6 +192,13 @@ async fn trade(
                 });
             return;
         }
+
+        let long_market = position_long
+            .and_then(|pos| get_market_for_position(pos, &markets_long))
+            .unwrap();
+        let short_market = position_short
+            .and_then(|pos| get_market_for_position(pos, &markets_short))
+            .unwrap();
 
         let exit_arb = Some(get_exit_arb_data(long_market.clone(), short_market.clone(), config));
 
