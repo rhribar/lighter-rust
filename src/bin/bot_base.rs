@@ -262,7 +262,7 @@ async fn trade(
             exit(
                 position_long,
                 position_short,
-                exit_arb,
+                &exit_arb,
                 long_market,
                 short_market,
                 &operator_map,
@@ -353,7 +353,7 @@ async fn calc_pnl(
 async fn exit(
     position_a: &Position,
     position_b: &Position,
-    exit_arb: Option<ExitArbitrage>,
+    exit_arb: &ExitArbitrage,
     long_market: &MarketInfo,
     short_market: &MarketInfo,
     operator_map: &HashMap<ExchangeName, &dyn Operator>,
@@ -361,7 +361,6 @@ async fn exit(
 ) {
     info!("Can exit position profitably, or funding is to negative and we kill");
 
-    let exit_arb = exit_arb.as_ref().unwrap();
     let long_exit_px = exit_arb.long_exit_px;
     let short_exit_px = exit_arb.short_exit_px;
 
@@ -478,6 +477,8 @@ async fn enter(
             long_entry_px - short_entry_px,
             (long_entry_px - short_entry_px) / short_entry_px * Decimal::from(100)
         );
+
+        info!("Estimated funding diff ann: {}%", op.funding_diff * Decimal::from(24 * 365 * 100));
 
         match create_order(
             *long_operator,
@@ -677,7 +678,7 @@ fn get_entry_arb_data(market_long: MarketInfo, market_short: MarketInfo, config:
         entry_arb_valid_after_fees && entry_funding_diff > Decimal::from(20);
     if entry_arb_valid_before_fees {
         info!(
-            "ENTRY ARB VALID BEFORE FEES: {} | Long Market: {} | Short Market: {} | Long Entry Price: {} | Short Entry Price: {} | spread {} | spread% {}% | my check: {}  my check with fees: {} long_entry_px_wfees {} short_entry_px_wfees {}",
+            "ENTRY ARB VALID BEFORE FEES: {} | Long Market: {} | Short Market: {} | Long Entry Price: {} | Short Entry Price: {} | spread {} | spread% {}% | my check: {}  my check with fees: {} long_entry_px_wfees {} short_entry_px_wfees {} entry_funding_diff {} entry_arb_valid_after_fees_and_funding_ok {}",
             market_long.symbol,
             market_long.exchange,
             market_short.exchange,
@@ -688,7 +689,9 @@ fn get_entry_arb_data(market_long: MarketInfo, market_short: MarketInfo, config:
             long_entry_px < short_entry_px,
             entry_arb_valid_after_fees,
             long_entry_px_wfees,
-            short_entry_px_wfees
+            short_entry_px_wfees,
+            entry_funding_diff,
+            entry_arb_valid_after_fees_and_funding_ok
         );
     }
 

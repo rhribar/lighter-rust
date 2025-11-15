@@ -11,6 +11,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
+use log::info;
 use rust_decimal::Decimal;
 use serde_json::json;
 
@@ -139,10 +140,14 @@ impl Operator for OperatorExtended {
         headers.insert("User-Agent".to_string(), "bot-rs/1.0".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
 
+        info!("[FETCHER] Extended create_order request payload: {:?}", order_payload);
+
         let response = self
             .client
             .post("/user/order", &order_payload.to_string(), Some(headers))
             .await;
+
+        info!("[FETCHER] Extended create_order response: {:?}", response);
         match response {
             Ok(resp) => {
                 let response_text = resp.text().await.map_err(|e| PointsBotError::Unknown {
