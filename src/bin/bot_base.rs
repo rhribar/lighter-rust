@@ -144,29 +144,6 @@ async fn trade(
             positions_b.first().map(|p| &p.symbol)
         };
 
-        let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, config).await;
-
-        let current_op_data = current_symbol.and_then(|s| arbitrage_opportunities.iter().find(|op| &op.symbol == s));
-
-        let current_funding_diff_ann = current_op_data
-            .map(|op| op.funding_diff * Decimal::from(24 * 365 * 100))
-            .unwrap_or(Decimal::ZERO);
-
-        info!(
-            "Current open position symbol: {:?}, funding diff ann: {:?}%",
-            current_symbol, current_funding_diff_ann
-        );
-
-        if let Some(new_op) = get_first_op(&arbitrage_opportunities).await {
-            let new_symbol = &new_op.symbol;
-            let new_funding_diff_ann = new_op.funding_diff * Decimal::from(24 * 365 * 100);
-
-            info!(
-                "New ops exists symbol: {:?}, funding diff ann: {:?}%",
-                new_symbol, new_funding_diff_ann
-            );
-        }
-
         let position_a = positions_a.iter().find(|p| p.symbol == *current_symbol.unwrap());
         let position_b = positions_b.iter().find(|p| p.symbol == *current_symbol.unwrap());
 
@@ -199,6 +176,30 @@ async fn trade(
         let short_market = position_short
             .and_then(|pos| get_market_for_position(pos, &markets_short))
             .unwrap();
+
+        let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, config).await;
+
+        let current_op_data = arbitrage_opportunities.iter().find(|op| &op.symbol == current_symbol.unwrap()).unwrap();
+        let current_funding_diff_ann = if long_market.exchange == current_op_data.long_market.exchange {
+            current_op_data.funding_diff * Decimal::from(24 * 365 * 100)
+        } else {
+            -current_op_data.funding_diff * Decimal::from(24 * 365 * 100)
+        };
+
+        info!(
+            "Current open position symbol: {:?}, funding diff ann: {:?}%",
+            current_symbol, current_funding_diff_ann
+        );
+
+        if let Some(new_op) = get_first_op(&arbitrage_opportunities).await {
+            let new_symbol = &new_op.symbol;
+            let new_funding_diff_ann = new_op.funding_diff * Decimal::from(24 * 365 * 100);
+
+            info!(
+                "New ops exists symbol: {:?}, funding diff ann: {:?}%",
+                new_symbol, new_funding_diff_ann
+            );
+        }
 
         let exit_arb = Some(get_exit_arb_data(long_market.clone(), short_market.clone(), config));
 
