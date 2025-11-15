@@ -144,11 +144,13 @@ async fn trade(
             positions_b.first().map(|p| &p.symbol)
         };
 
-        let position_a = positions_a.iter().find(|p| p.symbol == *current_symbol.unwrap());
-        let position_b = positions_b.iter().find(|p| p.symbol == *current_symbol.unwrap());
+        let position_a = positions_a.iter().find(|p| p.symbol == *current_symbol.unwrap())
+            .expect("Could not find position_a for symbol");
+        let position_b = positions_b.iter().find(|p| p.symbol == *current_symbol.unwrap())
+            .expect("Could not find position_b for symbol");
 
         let (position_long, position_short, markets_long, markets_short) =
-            if position_a.unwrap().side == PositionSide::Long {
+            if position_a.side == PositionSide::Long {
                 (position_a, position_b, &markets_a, &markets_a)
             } else {
                 (position_b, position_a, &markets_b, &markets_b)
@@ -170,12 +172,8 @@ async fn trade(
             return;
         }
 
-        let long_market = position_long
-            .and_then(|pos| get_market_for_position(pos, &markets_long))
-            .unwrap();
-        let short_market = position_short
-            .and_then(|pos| get_market_for_position(pos, &markets_short))
-            .unwrap();
+        let long_market = get_market_for_position(position_long, &markets_long).unwrap();
+        let short_market = get_market_for_position(position_short, &markets_short).unwrap();
 
         let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, config).await;
 
@@ -202,10 +200,36 @@ async fn trade(
         }
 
         let exit_arb = Some(get_exit_arb_data(long_market.clone(), short_market.clone(), config));
+        let exit_arb = exit_arb.as_ref().unwrap();
 
-        let pnl_cum = calc_pnl(exit_arb.as_ref(), position_long, position_short).await;
+        let pnl_cum = calc_pnl(exit_arb, position_long, position_short).await;
 
-        if exit_arb.as_ref().unwrap().exit_arb_valid_after_fees {
+        let leverage = current_op_data.long_market.leverage.min(current_op_data.short_market.leverage);
+
+        let long_exit_px = exit_arb.long_exit_px;
+        let short_exit_px = exit_arb.short_exit_px;
+
+        info!(
+            "Current symbol exit arbitrage data: Long Exit Px: {}, Short Exit Px: {}",
+            long_exit_px, short_exit_px
+        );
+
+        info!("Leverage: {}", leverage);
+
+        let percent_exposure_long = ((long_exit_px / position_long.entry_price) - Decimal::ONE) * leverage * Decimal::from(100); // in percent
+        let percent_exposure_short = (Decimal::ONE - (short_exit_px / position_short.entry_price)) * leverage * Decimal::from(100);
+
+        let percent_exposure = percent_exposure_long.max(percent_exposure_short);
+
+        info!("Long entry price: {} | Current long exit px: {} | Percent exposure long: {}", position_long.entry_price, long_exit_px, percent_exposure_long);
+        info!("Short entry price: {} | Current short exit px: {} | Percent exposure short: {}", position_short.entry_price, short_exit_px, percent_exposure_short);
+
+        info!("Overall percent exposure to liquidation: {}%", percent_exposure);
+
+        if percent_exposure > Decimal::from(49) {
+            info!("EXIT CHECK: Position is too close to liquidation: {}%, change position", percent_exposure);
+            change_position = true;
+        } else if exit_arb.exit_arb_valid_after_fees {
             info!("EXIT CHECK: Our exit is profitable after fees, change position");
             change_position = true;
         } else if current_funding_diff_ann > Decimal::from(25) {
@@ -236,8 +260,8 @@ async fn trade(
 
         if change_position {
             exit(
-                position_long.cloned(),
-                position_short.cloned(),
+                position_long,
+                position_short,
                 exit_arb,
                 long_market,
                 short_market,
@@ -268,36 +292,35 @@ async fn trade(
 }
 
 async fn calc_pnl(
-    exit_arb: Option<&ExitArbitrage>,
-    position_long: Option<&Position>,
-    position_short: Option<&Position>,
+    exit_arb: &ExitArbitrage,
+    position_long: &Position,
+    position_short: &Position,
 ) -> Decimal {
-    let exit_arb_1 = exit_arb.as_ref().unwrap();
     // when we exit a short we buy, so we would rather buy lower, so when we come here, we know that price is not good, and we know this will be negative, thats why buy is first (or short exit)
     // this includes spread and taker fees here
 
     // check cum funding, call for each exchange
     // check unrealized pnl for each position
 
-    let spread_percent = (exit_arb_1.short_exit_px_wfees - exit_arb_1.long_exit_px_wfees)
-        / exit_arb_1.short_exit_px_wfees
+    let spread_percent = (exit_arb.short_exit_px_wfees - exit_arb.long_exit_px_wfees)
+        / exit_arb.short_exit_px_wfees
         * Decimal::from(100);
 
     info!("Exit Spread Percent: {}", spread_percent);
 
-    let position_long_1 = position_long.map(|p| p).expect("Missing position long");
-    let position_short_1 = position_short.map(|p| p).expect("Missing position short");
+    let position_long_1 = position_long;
+    let position_short_1 = position_short;
     let pnl_long =
-        exit_arb_1.long_exit_px_wfees * position_long_1.size - position_long_1.entry_price * position_long_1.size;
+        exit_arb.long_exit_px_wfees * position_long_1.size - position_long_1.entry_price * position_long_1.size;
 
     let pnl_short =
-        position_short_1.entry_price * position_short_1.size - exit_arb_1.short_exit_px_wfees * position_short_1.size;
+        position_short_1.entry_price * position_short_1.size - exit_arb.short_exit_px_wfees * position_short_1.size;
 
     let pnl_long_before_fees =
-        exit_arb_1.long_exit_px * position_long_1.size - position_long_1.entry_price * position_long_1.size;
+        exit_arb.long_exit_px * position_long_1.size - position_long_1.entry_price * position_long_1.size;
 
     let pnl_short_before_fees =
-        position_short_1.entry_price * position_short_1.size - exit_arb_1.short_exit_px * position_short_1.size;
+        position_short_1.entry_price * position_short_1.size - exit_arb.short_exit_px * position_short_1.size;
 
     let pnl_calc_before_fees = pnl_long_before_fees + pnl_short_before_fees;
 
@@ -328,8 +351,8 @@ async fn calc_pnl(
 }
 
 async fn exit(
-    position_a: Option<Position>,
-    position_b: Option<Position>,
+    position_a: &Position,
+    position_b: &Position,
     exit_arb: Option<ExitArbitrage>,
     long_market: &MarketInfo,
     short_market: &MarketInfo,
@@ -367,7 +390,7 @@ async fn exit(
         *long_operator,
         &long_market,
         PositionSide::Short,
-        &position_a.unwrap().size,
+        &position_a.size,
         &long_exit_px,
         Some(true),
     )
@@ -381,7 +404,7 @@ async fn exit(
         *short_operator,
         &short_market,
         PositionSide::Long,
-        &position_b.unwrap().size,
+        &position_b.size,
         &short_exit_px,
         Some(true),
     )
