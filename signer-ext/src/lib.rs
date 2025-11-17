@@ -207,9 +207,13 @@ mod tests {
 
     #[test]
     fn test_direct_auth_token_loop() {
-        let private_key = "bda332f3aaa2d9cfdd8920830ea37efce9636c671a426bd4cb9815007e2a2917604ab47857cbb200";
 
-        let mgr = KeyManager::from_hex(private_key).expect("invalid private key");
+        use goldilocks_crypto::ScalarField;
+        let private_key = ScalarField::sample_crypto();
+        let private_key_bytes = private_key.to_bytes_le();
+
+        let hex_string = hex::encode(private_key_bytes);
+        let mgr = KeyManager::from_hex(&hex_string).expect("invalid private key");
 
         let mut failed = 0;
 
