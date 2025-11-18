@@ -1,4 +1,5 @@
-// Helper to extract price and size from order book array
+use api_client::LighterClient;
+use reqwest::header::{HeaderMap, HeaderValue};
 use super::base::{AccountData, Fetcher, MarketInfo, Position};
 use crate::{
     AssetMapping, BotJsonConfig, ExchangeName, HttpClient, PointsBotError, PointsBotResult, PositionSide,
@@ -9,17 +10,20 @@ use async_tungstenite::{tokio::connect_async, tungstenite::Message};
 use futures::{SinkExt, StreamExt};
 use log::info;
 use rust_decimal::{prelude::FromPrimitive, Decimal};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
+    collections::{HashMap, HashSet}, fs, io, str::FromStr
 };
+use std::io::Write;
 use tokio::time::{timeout, Duration};
 
 pub struct FetcherLighter {
     client: HttpClient,
     wallet: Option<String>,
+    account_index: i64,
+    sign_client: LighterClient,
+    auth_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +44,7 @@ struct ApiAccount {
 
 #[derive(Debug, Deserialize)]
 struct ApiPosition {
+    market_id: u32,
     symbol: String,
     sign: i32,
     position: String,
@@ -65,13 +70,49 @@ struct MarketInfoBuilder {
     last_trade_price: Option<Decimal>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct LastChangeTs {
+    #[serde(rename = "lastChangeTs")]
+    last_change_ts: u64,
+}
+
+const LAST_CHANGE_PATH: &str = "last_change.json";
+
+pub fn write_last_change(ts: u64) -> io::Result<()> {
+    let obj = LastChangeTs { last_change_ts: ts };
+    let json = serde_json::to_string(&obj)?;
+    let mut file = fs::File::create(LAST_CHANGE_PATH)?;
+    file.write_all(json.as_bytes())
+}
+
+pub fn read_last_change() -> io::Result<u64> {
+    let data = fs::read_to_string(LAST_CHANGE_PATH)?;
+    let obj: LastChangeTs = serde_json::from_str(&data)?;
+    Ok(obj.last_change_ts)
+}
+
 impl FetcherLighter {
     pub fn new(config: &BotJsonConfig) -> Self {
         let client = HttpClient::new("https://mainnet.zklighter.elliot.ai/api/v1/".to_string(), Some(1000));
 
         let wallet = config.wallet_address.clone();
 
-        Self { client, wallet }
+        let lighter_api_key = config.lighter.as_ref().map(|lighter| lighter.api_key.clone());
+        let account_index = config.lighter.as_ref().map(|lighter| lighter.account_index as i64);
+        let api_key_index = config.lighter.as_ref().map(|lighter| lighter.api_key_index as u8);
+
+        let sign_client = LighterClient::new(
+            "https://mainnet.zklighter.elliot.ai".to_string(),
+            &lighter_api_key.clone().unwrap(),
+            account_index.unwrap(),
+            api_key_index.unwrap(),
+        ).expect("Failed to create LighterClient");
+
+        let default_expiry_seconds = 7 * 60 * 60; // 7 hours
+        let auth_token = sign_client.create_auth_token(default_expiry_seconds)
+            .expect("Failed to create auth token");
+
+        Self { client, wallet, account_index: account_index.unwrap(), sign_client, auth_token }
     }
 }
 
@@ -91,6 +132,9 @@ impl Fetcher for FetcherLighter {
         let resp_text = resp.text().await?;
         let api_resp: ApiAccountResponse = serde_json::from_str(&resp_text)?;
         let account = &api_resp.accounts[0];
+        let funding_map = fetch_and_sum_funding(&self.client, self.account_index, &self.auth_token).await?;
+
+        info!("Funding map: {:?}", funding_map);
 
         let positions = account
             .positions
@@ -117,10 +161,7 @@ impl Fetcher for FetcherLighter {
                         unrealized_pnl: Decimal::from_str(&p.unrealized_pnl).unwrap_or(Decimal::ZERO),
                         margin_used: Decimal::ZERO,
                         liquidation_price: Decimal::from_str(&p.liquidation_price).ok(),
-                        cum_funding: p
-                            .total_funding_paid_out
-                            .as_deref()
-                            .and_then(|s| Decimal::from_str(s).ok()),
+                        cum_funding: Some(funding_map.get(&p.market_id).cloned().unwrap_or(Decimal::ZERO)),
                     })
                 }
             })
@@ -185,6 +226,46 @@ impl Fetcher for FetcherLighter {
             })
             .collect())
     }
+}
+
+pub async fn fetch_and_sum_funding(
+    http_client: &HttpClient,
+    account_index: i64,
+    auth_token: &str,
+) -> PointsBotResult<HashMap<u32, Decimal>> {
+    let last_change_ts: u64 = match read_last_change() {
+        Ok(ts) => ts,
+        Err(_) => 0,
+    };
+
+    let url = format!("positionFunding?account_index={}&limit=100", account_index);
+    let mut headers: HashMap<String, String> = HashMap::new();
+    headers.insert("accept".to_string(), "application/json".to_string());
+    headers.insert("authorization".to_string(), auth_token.to_string());
+
+    let resp = http_client.get(&url, Some(headers)).await?;
+    let status_code = resp.status().as_u16();
+    let resp_text = resp.text().await?;
+    let json: Value = serde_json::from_str(&resp_text)?;
+
+    let events = json["position_fundings"].as_array().ok_or_else(|| PointsBotError::Exchange {
+        code: status_code.to_string(),
+        message: "Missing position_fundings array".to_string(),
+    })?;
+
+    let mut result = HashMap::new();
+    for event in events {
+        let market_id = event["market_id"].as_u64().unwrap_or(0) as u32;
+        let ts = event["timestamp"].as_u64().unwrap_or(0);
+        let change = event["change"].as_str().unwrap_or("0");
+        if ts >= last_change_ts {
+            let entry = result.entry(market_id).or_insert(Decimal::ZERO);
+            if let Ok(val) = Decimal::from_str(change) {
+                *entry += val;
+            }
+        }
+    }
+    Ok(result)
 }
 
 async fn fetch_market_details(http_client: &crate::HttpClient) -> PointsBotResult<HashMap<u32, MarketInfoBuilder>> {

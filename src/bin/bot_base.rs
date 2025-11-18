@@ -13,10 +13,7 @@ use tokio::{
 };
 
 use points_bot_rs::{
-    config,
-    fetchers::{AccountData, Fetcher, MarketInfo, Position},
-    operators::{Operator, OrderRequest, OrderResponse, OrderType},
-    BotEnvConfig, BotJsonConfig, BotMode, ExchangeName, PointsBotResult, PositionSide,
+    BotEnvConfig, BotJsonConfig, BotMode, ExchangeName, PointsBotResult, PositionSide, config, fetchers::{AccountData, Fetcher, MarketInfo, Position, write_last_change}, operators::{Operator, OrderRequest, OrderResponse, OrderType}
 };
 use rust_decimal::RoundingStrategy;
 
@@ -507,6 +504,10 @@ async fn enter(
             Ok(order_result) => info!("Short order: {:?}", order_result),
             Err(e) => error!("Short order failed: {:?}", e),
         }
+
+        write_last_change(Utc::now().timestamp() as u64).unwrap_or_else(|e| {
+            error!("Failed to write last change time: {:?}", e);
+        });
     }
 }
 
