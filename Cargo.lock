@@ -11,6 +11,7 @@ dependencies = [
  "goldilocks-crypto",
  "hex",
  "poseidon-hash",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",
@@ -958,19 +959,6 @@ dependencies = [
 name = "signer"
 version = "0.1.0"
 dependencies = [
- "goldilocks-crypto",
- "hex",
- "poseidon-hash",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "signer-ext"
-version = "0.1.0"
-dependencies = [
- "base64",
  "goldilocks-crypto",
  "hex",
  "poseidon-hash",
