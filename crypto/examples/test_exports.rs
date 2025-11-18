@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     println!("Signing: Generated {} byte signature", signature.len());
     
     // Test verification
-    let is_valid = verify_signature(&signature, &message, &private_key_bytes)?;
+    let is_valid = verify_signature(&signature, &message, &public_key_bytes)?;
     println!("Verification: Signature is {}", if is_valid { "valid" } else { "invalid" });
     
     // Test error types

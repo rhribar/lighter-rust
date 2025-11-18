@@ -1,14 +1,11 @@
 mod signer;
 use std::os::raw::{c_char, c_int, c_longlong};
-use poseidon_hash::Goldilocks;
 use signer::{KeyManager, Result};
 use serde_json::json;
 use std::ffi::{CStr, CString};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hex;
-
-use crate::signer::SignerError;
 
 #[repr(C)]
 pub struct StrOrErr {
@@ -95,31 +92,6 @@ pub extern "C" fn SignCreateOrder(
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
     let expired_at = now + 599_000; // 10 minutes - 1 second (in milliseconds)
-    
-    let elements = vec![
-        Goldilocks::from_canonical_u64(chain_id as u64),
-        Goldilocks::from_canonical_u64(14),
-        Goldilocks::from_i64(nonce),
-        Goldilocks::from_i64(expired_at),
-        Goldilocks::from_i64(account_index),
-        Goldilocks::from_canonical_u64(api_key_index as u64),
-        Goldilocks::from_canonical_u64(market_index as u64),
-        Goldilocks::from_i64(client_order_index),
-        Goldilocks::from_i64(base_amount),
-        Goldilocks::from_canonical_u64(price as u64),
-        Goldilocks::from_canonical_u64(is_ask as u64),
-        Goldilocks::from_canonical_u64(order_type as u64),
-        Goldilocks::from_canonical_u64(time_in_force as u64),
-        Goldilocks::from_canonical_u64(reduce_only as u64),
-        Goldilocks::from_canonical_u64(trigger_price as u64),
-        Goldilocks::from_i64(order_expiry),
-    ];
-    let sign_err = build_transaction_vector(&pk, &elements);
-    if sign_err.is_err() {
-        return into_str_or_err(sign_err);
-    } 
-    let signature = sign_err.unwrap();
-
     let tx_info = json!({
             "AccountIndex": account_index,
             "ApiKeyIndex": api_key_index,
@@ -135,10 +107,10 @@ pub extern "C" fn SignCreateOrder(
             "OrderExpiry": order_expiry, // NilOrderExpiry for market orders
             "ExpiredAt": expired_at,
             "Nonce": nonce,
-            "Sig": signature,
+            "Sig": ""
         });
     let js = serde_json::to_string(&tx_info).unwrap();
-    return into_str_or_err(Ok(js));
+    build_transaction(&pk, &js, 14, chain_id as u32)
 }
 
 #[no_mangle]
@@ -152,27 +124,10 @@ pub extern "C" fn SignCancelOrder(
     nonce: c_longlong,
 ) -> StrOrErr {
 
-    let pk = unsafe { CStr::from_ptr(private_key) }.to_string_lossy().to_string();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
     let expired_at = now + 599_000; // 10 minutes - 1 second (in milliseconds)
 
-    let elements = vec![
-        Goldilocks::from_canonical_u64(chain_id as u64),
-        Goldilocks::from_canonical_u64(15),
-        Goldilocks::from_i64(nonce),
-        Goldilocks::from_i64(expired_at),
-        Goldilocks::from_i64(account_index),
-        Goldilocks::from_canonical_u64(api_key_index as u64),
-        Goldilocks::from_canonical_u64(market_index as u64),
-        Goldilocks::from_i64(order_index),
-    ];
-
-    let sign_err = build_transaction_vector(&pk, &elements);
-    if sign_err.is_err() {
-        return into_str_or_err(sign_err);
-    } 
-    let signature = sign_err.unwrap();
-    
+    let pk = unsafe { CStr::from_ptr(private_key) }.to_string_lossy().to_string();
     let tx_info = json!({
         "AccountIndex": account_index,
         "ApiKeyIndex": api_key_index,
@@ -180,11 +135,11 @@ pub extern "C" fn SignCancelOrder(
         "Index": order_index,
         "ExpiredAt": expired_at,
         "Nonce": nonce,
-        "Sig": signature
+        "Sig": ""
     });
 
     let js = serde_json::to_string(&tx_info).unwrap();
-    return into_str_or_err(Ok(js));
+    build_transaction(&pk, &js, 15, chain_id as u32)
 }
 
 #[no_mangle]
@@ -194,63 +149,57 @@ pub extern "C" fn SignModifyOrder(
     api_key_index: c_int,
     account_index: c_longlong,
     market_index: c_int,
-    index: c_longlong,
+    client_order_index: c_longlong,
     new_base_amount: c_longlong,
     new_price: c_int,
-    trigger_price: c_int,
+    reduce_only: c_int,
+    new_order_expiry: c_longlong,
     nonce: c_longlong,
 ) -> StrOrErr {
     let pk = unsafe { CStr::from_ptr(private_key) }.to_string_lossy().to_string();
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
-    let expired_at = now + 599_000; // 10 minutes - 1 second (in milliseconds)
 
-    let elements = vec![
-        Goldilocks::from_canonical_u64(chain_id as u64),
-        Goldilocks::from_canonical_u64(17),
-        Goldilocks::from_i64(nonce),
-        Goldilocks::from_i64(expired_at),
-
-        Goldilocks::from_i64(account_index),
-        Goldilocks::from_canonical_u64(api_key_index as u64),
-        Goldilocks::from_canonical_u64(market_index as u64),
-        Goldilocks::from_i64(index),
-        
-        Goldilocks::from_i64(new_base_amount),
-        Goldilocks::from_canonical_u64(new_price as u64),
-        Goldilocks::from_canonical_u64(trigger_price as u64),
-    ];
-
-    let sign_err = build_transaction_vector(&pk, &elements);
-    if sign_err.is_err() {
-        return into_str_or_err(sign_err);
-    } 
-    let signature = sign_err.unwrap();
     let tx_info = json!({
         "AccountIndex": account_index,
         "ApiKeyIndex": api_key_index,
         "MarketIndex": market_index,
-        "Index": index,
+        "ClientOrderIndex": client_order_index,
         "BaseAmount": new_base_amount,
         "Price": new_price,
-        "TriggerPrice": trigger_price,
-        "ExpiredAt": expired_at,
+        "ReduceOnly": reduce_only,
+        "OrderExpiry": new_order_expiry,
+        "ExpiredAt": new_order_expiry,
         "Nonce": nonce,
-        "Sig": signature
+        "Sig": ""
     });
 
     let js = serde_json::to_string(&tx_info).unwrap();
-    return into_str_or_err(Ok(js));
+
+    build_transaction(&pk, &js, 17, chain_id as u32)
 }
 
-fn build_transaction_vector(pk: &str, elements: &Vec<Goldilocks>) -> Result<String> {
-    // Initialize key manager
+#[no_mangle]
+pub extern "C" fn SignJsonData(
+    private_key: *const c_char,
+    json_data: *const c_char,
+    tx_type: c_int,
+    chain_id: c_int,
+)-> StrOrErr {
+    let pk = unsafe { CStr::from_ptr(private_key) }.to_string_lossy().to_string();
+    let js = unsafe { CStr::from_ptr(json_data) }.to_string_lossy().to_string();
 
-    let mgr = KeyManager::from_hex(pk)
-        .map_err(|e| SignerError::API(format!("Invalid private key {e}").to_string()))?;
-
-    mgr.sign_vector(elements, false)
+    build_transaction(&pk, &js, tx_type as u32, chain_id as u32)
 }
 
+fn build_transaction(pk:&str, tx_json: &str, tx_type: u32, lighter_chain_id: u32)->StrOrErr{
+
+    let mgr = match KeyManager::from_hex(&pk) {
+        Ok(m) => m,
+        Err(e) => return into_str_or_err(Err(e)),
+    };
+    let signature = mgr.sign_transaction(&tx_json, tx_type, lighter_chain_id, false);
+
+    into_str_or_err(signature)
+}
 
 #[cfg(test)]
 mod tests {
@@ -258,13 +207,9 @@ mod tests {
 
     #[test]
     fn test_direct_auth_token_loop() {
+        let private_key = "bda332f3aaa2d9cfdd8920830ea37efce9636c671a426bd4cb9815007e2a2917604ab47857cbb200";
 
-        use goldilocks_crypto::ScalarField;
-        let private_key = ScalarField::sample_crypto();
-        let private_key_bytes = private_key.to_bytes_le();
-
-        let hex_string = hex::encode(private_key_bytes);
-        let mgr = KeyManager::from_hex(&hex_string).expect("invalid private key");
+        let mgr = KeyManager::from_hex(private_key).expect("invalid private key");
 
         let mut failed = 0;
 

@@ -3,7 +3,8 @@ members = [
     "poseidon-hash",
     "crypto", 
     "signer",
-    "api-client"
+    "api-client",
+    "signer-ext"
 ]
 resolver = "2"
 

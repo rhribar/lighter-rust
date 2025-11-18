@@ -388,43 +388,47 @@ impl ScalarField {
     /// ```
     pub fn sample_crypto() -> ScalarField {
         use rand::Rng;
-
-        // Correct 40-byte ORDER, big-endian
-        let order_bytes = hex::decode("7ffffffd800000077ffffff1000000167fffffe6cfb80639e8885c39d724a09ce80fd996948bffe1")
-                                .expect("invalid ORDER hex");
-
+        
+        // Generate random big int in range [0, ORDER)
+        // ORDER = 1067993516717146951041484916571792702745057740581727230159139685185762082554198619328292418486241
+        let order_bytes = hex::decode("e80fd996948bffe1e8885c39d724a09c7fffffe6cfb806397ffffff1000000167ffffffd80000007")
+            .expect("invalid ORDER hex");
+        
         let order_big = BigUint::from_bytes_be(&order_bytes);
-
+        
+        // Generate random value less than ORDER
+        // We generate random bytes and check if less than ORDER
         let mut rng = rand::thread_rng();
         let mut random_bytes = [0u8; 40];
-
+        
         loop {
-            // Generate 40 random bytes
-            for b in &mut random_bytes {
-                *b = rng.gen();
+            // Generate random bytes
+            for byte in &mut random_bytes {
+                *byte = rng.gen();
             }
-
-            let random_big = BigUint::from_bytes_be(&random_bytes);
+            
+            let random_big = BigUint::from_bytes_le(&random_bytes);
             if random_big < order_big {
+                // Convert to limbs
                 let limbs_array = Self::bigint_to_limbs(random_big);
                 return ScalarField(limbs_array);
             }
         }
     }
-
+    
+    // Convert big int to 5-limb array (little endian)
     fn bigint_to_limbs(value: BigUint) -> [u64; 5] {
-        let mut bytes = value.to_bytes_le();
-        if bytes.len() < 40 {
-            bytes.resize(40, 0);
-        }
-
+        let bytes = value.to_bytes_le();
         let mut limbs = [0u64; 5];
+        
+        // Convert bytes to limbs (little endian, 8 bytes per limb)
         for (i, chunk) in bytes.chunks(8).enumerate().take(5) {
             let mut limb_bytes = [0u8; 8];
-            limb_bytes[..chunk.len()].copy_from_slice(chunk);
+            let copy_len = chunk.len().min(8);
+            limb_bytes[..copy_len].copy_from_slice(&chunk[..copy_len]);
             limbs[i] = u64::from_le_bytes(limb_bytes);
         }
-
+        
         limbs
     }
     

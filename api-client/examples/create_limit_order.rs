@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         order_book_index: 1,   // 0 = BTC-USD or ETH-USD
         client_order_index: 0, // unique identifier
         base_amount: 100,      // 0.001 tokens in smallest unit
-        price: 840000,        // limit price in cents
+        price: 1040000,        // limit price in cents
         is_ask: false,         // false = buy order
         order_type: 0,         // 0 = LimitOrder
         time_in_force: 1,      // 1 = GoodTillTime
