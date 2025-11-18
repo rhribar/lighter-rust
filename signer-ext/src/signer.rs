@@ -1,7 +1,6 @@
 use goldilocks_crypto::{schnorr::{sign_with_nonce},schnorr::verify_signature, ScalarField, Goldilocks};
 use thiserror::Error;
 use base64::Engine;
-use serde_json::{json,Value};
 
 #[derive(Error, Debug)]
 pub enum SignerError {
@@ -144,170 +143,8 @@ impl KeyManager {
         Ok(format!("{}:{}", auth_data, signature_hex))
     }
 
-    pub fn sign_transaction(&self, tx_json: &str, tx_type: u32, lighter_chain_id: u32, verify_sign:bool) -> Result<String> {
-                // Parse the transaction JSON to extract fields
-        let tx_value: Value = serde_json::from_str(tx_json)?;
-
-        // Determine chain ID based on base URL
-        // Mainnet: 304, Testnet: 300
-        let nonce = tx_value["Nonce"].as_i64().unwrap_or(0);
-        let expired_at = tx_value["ExpiredAt"].as_i64().unwrap_or(0);
-        let account_index = tx_value["AccountIndex"].as_i64().unwrap_or(0);
-        let api_key_index = tx_value["ApiKeyIndex"].as_u64().unwrap_or(0) as u32;
-
-        use poseidon_hash::Goldilocks;
-
-        // Helper function to convert signed i64 to Goldilocks field element
-        // Handles sign extension properly for negative values
-        let to_goldi_i64 = |val: i64| Goldilocks::from_i64(val);
-
-        let elements = match tx_type {
-            14 => {
-                // CREATE_ORDER: 16 elements
-        let market_index = tx_value["MarketIndex"].as_u64().unwrap_or(0) as u32;
-        let client_order_index = tx_value["ClientOrderIndex"].as_i64().unwrap_or(0);
-        let base_amount = tx_value["BaseAmount"].as_i64().unwrap_or(0);
-        let price = tx_value["Price"]
-            .as_u64()
-            .or_else(|| tx_value["Price"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let is_ask = tx_value["IsAsk"]
-            .as_u64()
-            .or_else(|| tx_value["IsAsk"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let order_type = tx_value["Type"]
-            .as_u64()
-            .or_else(|| tx_value["Type"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let time_in_force = tx_value["TimeInForce"]
-            .as_u64()
-            .or_else(|| tx_value["TimeInForce"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let reduce_only = tx_value["ReduceOnly"]
-            .as_u64()
-            .or_else(|| tx_value["ReduceOnly"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let trigger_price = tx_value["TriggerPrice"]
-            .as_u64()
-            .or_else(|| tx_value["TriggerPrice"].as_i64().map(|v| v as u64))
-            .unwrap_or(0) as u32;
-        let order_expiry = tx_value["OrderExpiry"].as_i64().unwrap_or(0);
-        
-                vec![
-                    Goldilocks::from_canonical_u64(lighter_chain_id as u64),
-                    Goldilocks::from_canonical_u64(tx_type as u64),
-                    to_goldi_i64(nonce),
-                    to_goldi_i64(expired_at),
-                    to_goldi_i64(account_index),
-                    Goldilocks::from_canonical_u64(api_key_index as u64),
-                    Goldilocks::from_canonical_u64(market_index as u64),
-                    to_goldi_i64(client_order_index),
-                    to_goldi_i64(base_amount),
-                    Goldilocks::from_canonical_u64(price as u64),
-                    Goldilocks::from_canonical_u64(is_ask as u64),
-                    Goldilocks::from_canonical_u64(order_type as u64),
-                    Goldilocks::from_canonical_u64(time_in_force as u64),
-                    Goldilocks::from_canonical_u64(reduce_only as u64),
-                    Goldilocks::from_canonical_u64(trigger_price as u64),
-                    to_goldi_i64(order_expiry),
-                ]
-            }
-            15 => {
-                // CANCEL_ORDER: 8 elements
-                let market_index = tx_value["MarketIndex"].as_u64().unwrap_or(0) as u32;
-                let order_index = tx_value["Index"].as_i64().unwrap_or(0);
-
-                vec![
-                    Goldilocks::from_canonical_u64(lighter_chain_id as u64),
-                    Goldilocks::from_canonical_u64(tx_type as u64),
-                    to_goldi_i64(nonce),
-                    to_goldi_i64(expired_at),
-                    to_goldi_i64(account_index),
-                    Goldilocks::from_canonical_u64(api_key_index as u64),
-                    Goldilocks::from_canonical_u64(market_index as u64),
-                    to_goldi_i64(order_index),
-                ]
-            }
-            16 => {
-                // CANCEL_ALL_ORDERS: 8 elements
-                let time_in_force = tx_value["TimeInForce"]
-                    .as_u64()
-                    .or_else(|| tx_value["TimeInForce"].as_i64().map(|v| v as u64))
-                    .unwrap_or(0) as u32;
-                let time = tx_value["Time"].as_i64().unwrap_or(0);
-
-                vec![
-                    Goldilocks::from_canonical_u64(lighter_chain_id as u64),
-                    Goldilocks::from_canonical_u64(tx_type as u64),
-                    to_goldi_i64(nonce),
-                    to_goldi_i64(expired_at),
-                    to_goldi_i64(account_index),
-                    Goldilocks::from_canonical_u64(api_key_index as u64),
-                    Goldilocks::from_canonical_u64(time_in_force as u64),
-                    to_goldi_i64(time),
-                ]
-            }
-            8 => {
-                // CHANGE_PUB_KEY: needs pubkey parsing (ArrayFromCanonicalLittleEndianBytes)
-                let pubkey_hex = tx_value["PubKey"].as_str().unwrap_or("");
-                let pubkey_bytes = hex::decode(pubkey_hex)
-                    .map_err(|e| SignerError::API(format!("Invalid PubKey hex: {}", e)))?;
-                if pubkey_bytes.len() != 40 {
-                    return Err(SignerError::API("PubKey must be 40 bytes".to_string()));
-                }
-                // Convert 40-byte public key to 5 Goldilocks elements (8 bytes per element)
-                let mut pubkey_elems = Vec::new();
-                for i in 0..5 {
-                    let chunk = &pubkey_bytes[i*8..(i+1)*8];
-                    let val = u64::from_le_bytes(chunk.try_into().unwrap());
-                    pubkey_elems.push(Goldilocks::from_canonical_u64(val));
-                }
-
-                let mut elems = vec![
-                    Goldilocks::from_canonical_u64(lighter_chain_id as u64),
-                    Goldilocks::from_canonical_u64(tx_type as u64),
-                    to_goldi_i64(nonce),
-                    to_goldi_i64(expired_at),
-                    to_goldi_i64(account_index),
-                    Goldilocks::from_canonical_u64(api_key_index as u64),
-                ];
-                elems.extend(pubkey_elems);
-                elems
-            }
-            20 => {
-                // UPDATE_LEVERAGE: 9 elements
-                // Order: lighterChainId, txType, nonce, expiredAt, accountIndex, apiKeyIndex, marketIndex, initialMarginFraction, marginMode
-                let market_index = tx_value["MarketIndex"]
-                    .as_u64()
-                    .or_else(|| tx_value["MarketIndex"].as_i64().map(|v| v as u64))
-                    .unwrap_or(0) as u32;
-                let initial_margin_fraction = tx_value["InitialMarginFraction"]
-                    .as_u64()
-                    .or_else(|| tx_value["InitialMarginFraction"].as_i64().map(|v| v as u64))
-                    .unwrap_or(0) as u32;
-                let margin_mode = tx_value["MarginMode"]
-                    .as_u64()
-                    .or_else(|| tx_value["MarginMode"].as_i64().map(|v| v as u64))
-                    .unwrap_or(0) as u32;
-
-                vec![
-                    Goldilocks::from_canonical_u64(lighter_chain_id as u64),
-                    Goldilocks::from_canonical_u64(tx_type as u64),
-                    to_goldi_i64(nonce),
-                    to_goldi_i64(expired_at),
-                    to_goldi_i64(account_index),
-                    Goldilocks::from_canonical_u64(api_key_index as u64),
-                    Goldilocks::from_canonical_u64(market_index as u64),
-                    Goldilocks::from_canonical_u64(initial_margin_fraction as u64),
-                    Goldilocks::from_canonical_u64(margin_mode as u64),
-                ]
-            }
-            _ => {
-                return Err(SignerError::API(format!("Unsupported transaction type: {}", tx_type)));
-            }
-        };
-        
-                // Hash the Goldilocks field elements using Poseidon2 to produce a 40-byte hash
+    pub fn sign_vector(&self, elements: &Vec<Goldilocks>, verify_sign:bool) -> Result<String> {
+        // Hash the Goldilocks field elements using Poseidon2 to produce a 40-byte hash
         // The result is a quintic extension field element (Fp5) which is then converted to bytes
         use poseidon_hash::hash_to_quintic_extension;
         let hash_result = hash_to_quintic_extension(&elements);
@@ -328,15 +165,9 @@ impl KeyManager {
                 ));
             }
         }
-
-        
-
         let signature = self.sign(&message_array)?;
-        let mut final_tx_info = tx_value;
-        final_tx_info["Sig"] = json!(base64::engine::general_purpose::STANDARD.encode(&signature));
-        
-        let encode_json = serde_json::to_string(&final_tx_info);
-        Ok(encode_json.unwrap())
-
+        let signature_encoded = base64::engine::general_purpose::STANDARD.encode(&signature);
+        return Ok(signature_encoded);
+       
     }
 }
