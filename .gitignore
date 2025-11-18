@@ -4,3 +4,4 @@
 .env-production
 config.json
 config-production.json
+lighter-rust/
