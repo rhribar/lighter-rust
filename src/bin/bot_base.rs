@@ -151,9 +151,9 @@ async fn trade(
 
         let (position_long, position_short, markets_long, markets_short) =
             if position_a.side == PositionSide::Long {
-                (position_a, position_b, &markets_a, &markets_a)
+                (position_a, position_b, &markets_a, &markets_b)
             } else {
-                (position_b, position_a, &markets_b, &markets_b)
+                (position_b, position_a, &markets_b, &markets_a)
             };
 
         // smth wrong kill all, circuit out
