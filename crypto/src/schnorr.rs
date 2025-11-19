@@ -19,7 +19,6 @@ const R2: [u64; 4] = [
 ];
 
 // Elliptic curve constants
-#[allow(dead_code)]
 const A_ECG_FP5_POINT: Fp5Element = Fp5Element([
     Goldilocks(2), Goldilocks(0), Goldilocks(0), Goldilocks(0), Goldilocks(0)
 ]);
@@ -498,8 +497,6 @@ impl Point {
         
         // Windowed multiplication algorithm (optimized)
         const WINDOW: usize = 5;
-        #[allow(dead_code)]
-        const WIN_SIZE: usize = 1 << (WINDOW - 1); // 16
         
         // Make window with affine points
         let win = self.make_window_affine();
@@ -1023,33 +1020,7 @@ pub fn verify_signature(signature: &[u8], message: &[u8], public_key: &[u8]) -> 
     // Try to decode the Fp5Element as a Point
     // If decoding fails, return error instead of silently using wrong point
     let public_point = Point::decode(&public_key_fp5)
-        .ok_or_else(|| {
-            // Enhanced error context for debugging
-            #[cfg(debug_assertions)]
-            {
-                use std::println;
-                println!("DEBUG: Public key decoding failed");
-                println!("  public_key bytes: {:?}", public_key);
-                println!("  public_key_fp5: {:?}", public_key_fp5.to_bytes_le());
-                
-                // Check if it's zero (neutral point)
-                if public_key_fp5.is_zero() {
-                    println!("  Note: Public key is zero (neutral point)");
-                } else {
-                    // Debug the decoding process
-                    let w_squared = public_key_fp5.square();
-                    let e = w_squared.sub(&A_ECG_FP5_POINT);
-                    let e_squared = e.square();
-                    let delta = e_squared.sub(&B_MUL4_ECG_FP5_POINT);
-                    let (_r, success) = delta.canonical_sqrt();
-                    println!("  delta canonical_sqrt success: {}", success);
-                    if !success {
-                        println!("  delta: {:?}", delta.to_bytes_le());
-                    }
-                }
-            }
-            CryptoError::InvalidPublicKey
-        })?;
+        .ok_or(CryptoError::InvalidPublicKey)?;
 
     // Compute R = s * G + e * public_key
     // Using separate multiplications and addition (this should work correctly)
@@ -1131,25 +1102,6 @@ fn monty_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 }
 
 impl Scalar {
-    #[allow(dead_code)]
-    fn add(&self, other: &Scalar) -> Scalar {
-        let mut result = [0u64; 4];
-        let mut carry = 0u64;
-        
-        for i in 0..4 {
-            let sum = (self.0[i] as u128) + (other.0[i] as u128) + (carry as u128);
-            result[i] = (sum & 0xFFFFFFFFFFFFFFFF) as u64;
-            carry = (sum >> 64) as u64;
-        }
-        
-        // Reduce modulo N if necessary
-        if result >= N {
-            result = Scalar::sub_inner(&result, &N);
-        }
-        
-        Scalar(result)
-    }
-    
     pub fn sub(&self, other: &Scalar) -> Scalar {
         let mut result = [0u64; 4];
         let mut borrow = 0u64;
