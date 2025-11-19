@@ -15,9 +15,18 @@ pub struct OperatorLighter {
 
 impl OperatorLighter {
     pub async fn new(config: &BotJsonConfig) -> Self {
-        let lighter_api_key = config.lighter.as_ref().map(|lighter| lighter.api_key.clone());
-        let account_index = config.lighter.as_ref().map(|lighter| lighter.account_index as i64);
-        let api_key_index = config.lighter.as_ref().map(|lighter| lighter.api_key_index as u8);
+        let lighter_api_key = config
+            .lighter
+            .as_ref()
+            .map(|lighter| lighter.api_key.clone());
+        let account_index = config
+            .lighter
+            .as_ref()
+            .map(|lighter| lighter.account_index as i64);
+        let api_key_index = config
+            .lighter
+            .as_ref()
+            .map(|lighter| lighter.api_key_index as u8);
 
         let client = LighterClient::new(
             "https://mainnet.zklighter.elliot.ai".to_string(),
@@ -78,7 +87,10 @@ impl Operator for OperatorLighter {
                     return Ok(());
                 }
                 Err(e) => {
-                    info!("[OPERATOR] Signature invalid for update leverage, attempt_number={}", attempt);
+                    info!(
+                        "[OPERATOR] Signature invalid for update leverage, attempt_number={}",
+                        attempt
+                    );
                     last_err = Some(PointsBotError::Unknown {
                         msg: format!("SDK update_leverage error: {e}"),
                         source: None,
@@ -111,9 +123,10 @@ impl OperatorLighter {
             base_amount: (order.quantity * Decimal::from(10).powd(order.market.sz_decimals))
                 .to_i64()
                 .unwrap_or(0),
-            price: (order.price.unwrap_or(Decimal::ZERO) * Decimal::from(10).powd(order.market.px_decimals))
-                .to_i64()
-                .unwrap_or(0),
+            price: (order.price.unwrap_or(Decimal::ZERO)
+                * Decimal::from(10).powd(order.market.px_decimals))
+            .to_i64()
+            .unwrap_or(0),
             is_ask: matches!(order.side, PositionSide::Short),
             order_type: 0,    // 0 = LIMIT
             time_in_force: 1, // 1 = GOOD_TILL_TIME
@@ -134,7 +147,10 @@ impl OperatorLighter {
             }
         };
 
-        info!("[OPERATOR] Lighter order response: {}", serde_json::to_string_pretty(&response)?);
+        info!(
+            "[OPERATOR] Lighter order response: {}",
+            serde_json::to_string_pretty(&response)?
+        );
 
         let code = response["code"].as_i64().unwrap_or_default();
         let tx_hash = response["tx_hash"].as_str().unwrap_or("").to_string();

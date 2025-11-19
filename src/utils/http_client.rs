@@ -54,7 +54,11 @@ impl HttpClient {
         }
     }
 
-    pub async fn get(&self, endpoint: &str, headers: Option<HashMap<String, String>>) -> PointsBotResult<Response> {
+    pub async fn get(
+        &self,
+        endpoint: &str,
+        headers: Option<HashMap<String, String>>,
+    ) -> PointsBotResult<Response> {
         self.rate_limit().await;
         let url = format!("{}{}", self.base_url, endpoint);
         let request = Self::apply_headers(self.client.get(&url), headers.as_ref());

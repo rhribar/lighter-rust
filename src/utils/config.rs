@@ -67,7 +67,11 @@ impl BotEnvConfig {
     pub fn load_env() -> PointsBotResult<Self> {
         dotenv::dotenv().ok();
 
-        let mode = match env::var("BOT_MODE").unwrap_or_default().to_lowercase().as_str() {
+        let mode = match env::var("BOT_MODE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
             "production" => BotMode::Production,
             _ => BotMode::Testing,
         };
@@ -82,7 +86,10 @@ impl BotEnvConfig {
 impl BotJsonConfig {
     pub fn load_config_file(env_config: &BotEnvConfig) -> PointsBotResult<Vec<BotJsonConfig>> {
         let config_str = std::fs::read_to_string(
-            env_config.config_file_path.as_ref().expect("Missing config_file_path"),
+            env_config
+                .config_file_path
+                .as_ref()
+                .expect("Missing config_file_path"),
         )
         .map_err(|e| PointsBotError::Unknown {
             msg: format!("Failed to read config file: {}", e),
@@ -99,13 +106,22 @@ impl BotJsonConfig {
             .private_key
             .as_deref()
             .expect("Missing private_key in config");
-        let wallet = LocalWallet::from_str(private_key).expect("Failed to create wallet from private key");
+        let wallet =
+            LocalWallet::from_str(private_key).expect("Failed to create wallet from private key");
 
-        let (fetcher_a, operator_a) =
-            Self::create_fetcher_and_operator(config_json.exchange_a.unwrap(), wallet.clone(), config_json).await;
+        let (fetcher_a, operator_a) = Self::create_fetcher_and_operator(
+            config_json.exchange_a.unwrap(),
+            wallet.clone(),
+            config_json,
+        )
+        .await;
 
-        let (fetcher_b, operator_b) =
-            Self::create_fetcher_and_operator(config_json.exchange_b.unwrap(), wallet.clone(), config_json).await;
+        let (fetcher_b, operator_b) = Self::create_fetcher_and_operator(
+            config_json.exchange_b.unwrap(),
+            wallet.clone(),
+            config_json,
+        )
+        .await;
 
         BotConfig {
             id: config_json.id.clone(),
@@ -127,14 +143,20 @@ impl BotJsonConfig {
     ) -> (Box<dyn Fetcher>, Box<dyn Operator>) {
         match exchange {
             ExchangeName::Extended => {
-                config_json.extended.as_ref().expect("Missing extended config");
+                config_json
+                    .extended
+                    .as_ref()
+                    .expect("Missing extended config");
                 (
                     Box::new(FetcherExtended::new(&config_json)),
                     Box::new(OperatorExtended::new(&config_json).await),
                 )
             }
             ExchangeName::Lighter => {
-                config_json.lighter.as_ref().expect("Missing lighter config");
+                config_json
+                    .lighter
+                    .as_ref()
+                    .expect("Missing lighter config");
                 (
                     Box::new(FetcherLighter::new(&config_json)),
                     Box::new(OperatorLighter::new(&config_json).await),
@@ -157,16 +179,28 @@ impl BotJsonConfig {
 
     pub fn get_entry_offset(&self, exchange: ExchangeName) -> Decimal {
         match exchange {
-            ExchangeName::Extended => self.extended.as_ref().map_or(Decimal::ZERO, |c| c.entry_offset),
-            ExchangeName::Lighter => self.lighter.as_ref().map_or(Decimal::ZERO, |c| c.entry_offset),
+            ExchangeName::Extended => self
+                .extended
+                .as_ref()
+                .map_or(Decimal::ZERO, |c| c.entry_offset),
+            ExchangeName::Lighter => self
+                .lighter
+                .as_ref()
+                .map_or(Decimal::ZERO, |c| c.entry_offset),
             ExchangeName::Hyperliquid => Decimal::ZERO,
         }
     }
 
     pub fn get_exit_offset(&self, exchange: ExchangeName) -> Decimal {
         match exchange {
-            ExchangeName::Extended => self.extended.as_ref().map_or(Decimal::ZERO, |c| c.exit_offset),
-            ExchangeName::Lighter => self.lighter.as_ref().map_or(Decimal::ZERO, |c| c.exit_offset),
+            ExchangeName::Extended => self
+                .extended
+                .as_ref()
+                .map_or(Decimal::ZERO, |c| c.exit_offset),
+            ExchangeName::Lighter => self
+                .lighter
+                .as_ref()
+                .map_or(Decimal::ZERO, |c| c.exit_offset),
             ExchangeName::Hyperliquid => Decimal::ZERO,
         }
     }

@@ -1,12 +1,13 @@
 use super::base::{Operator, OrderRequest, OrderResponse};
 use crate::{
-    asset_mapping::AssetMapping, fetchers::MarketInfo, ExchangeName, OrderStatus, PointsBotError, PointsBotResult,
-    PositionSide, TickerDirection,
+    asset_mapping::AssetMapping, fetchers::MarketInfo, ExchangeName, OrderStatus, PointsBotError,
+    PointsBotResult, PositionSide, TickerDirection,
 };
 use async_trait::async_trait;
 use ethers::signers::LocalWallet;
 use hyperliquid_rust_sdk::{
-    ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus, ExchangeResponseStatus,
+    ClientLimit, ClientOrder, ClientOrderRequest, ExchangeClient, ExchangeDataStatus,
+    ExchangeResponseStatus,
 };
 use log::info;
 use rust_decimal::{prelude::ToPrimitive, Decimal};
@@ -48,11 +49,16 @@ impl Operator for OperatorHyperliquid {
             limit_px: order.price.unwrap_or(Decimal::ZERO).to_f64().unwrap_or(0.0),
             sz: order.quantity.to_f64().unwrap_or(0.0),
             reduce_only: order.reduce_only.unwrap_or(false),
-            order_type: ClientOrder::Limit(ClientLimit { tif: "Gtc".to_string() }),
+            order_type: ClientOrder::Limit(ClientLimit {
+                tif: "Gtc".to_string(),
+            }),
             cloid: None,
         };
 
-        let sdk_result = self.client.bulk_order(vec![sdk_order], Some(&self.client.wallet)).await;
+        let sdk_result = self
+            .client
+            .bulk_order(vec![sdk_order], Some(&self.client.wallet))
+            .await;
         let response = match sdk_result {
             Ok(resp) => resp,
             Err(e) => {
@@ -65,10 +71,13 @@ impl Operator for OperatorHyperliquid {
 
         match response {
             ExchangeResponseStatus::Ok(exchange_response) => {
-                let data_statuses = exchange_response.data.ok_or_else(|| PointsBotError::Exchange {
-                    code: "500".to_string(),
-                    message: "No order data in response".to_string(),
-                })?;
+                let data_statuses =
+                    exchange_response
+                        .data
+                        .ok_or_else(|| PointsBotError::Exchange {
+                            code: "500".to_string(),
+                            message: "No order data in response".to_string(),
+                        })?;
 
                 info!(target: "hyperliquid", "Order response: {:?}", data_statuses);
                 for status in data_statuses.statuses {
@@ -93,7 +102,8 @@ impl Operator for OperatorHyperliquid {
                                 symbol: order.market.symbol.clone(),
                                 side: order.side,
                                 status: OrderStatus::Filled,
-                                filled_quantity: Decimal::from_str(&filled_order.total_sz).unwrap_or(order.quantity),
+                                filled_quantity: Decimal::from_str(&filled_order.total_sz)
+                                    .unwrap_or(order.quantity),
                                 remaining_quantity: Decimal::ZERO,
                                 average_price: Decimal::from_str(&filled_order.avg_px).ok(),
                                 timestamp: chrono::Utc::now(),
@@ -117,8 +127,12 @@ impl Operator for OperatorHyperliquid {
     }
 
     async fn change_leverage(&self, market: MarketInfo, leverage: Decimal) -> PointsBotResult<()> {
-        let symbol = AssetMapping::map_ticker(ExchangeName::Hyperliquid, &market.symbol, TickerDirection::ToExchange)
-            .unwrap_or_else(|| market.symbol.clone());
+        let symbol = AssetMapping::map_ticker(
+            ExchangeName::Hyperliquid,
+            &market.symbol,
+            TickerDirection::ToExchange,
+        )
+        .unwrap_or_else(|| market.symbol.clone());
 
         let sdk_result = self
             .client

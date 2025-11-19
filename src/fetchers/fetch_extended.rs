@@ -1,7 +1,7 @@
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
 use crate::{
-    parse_decimal, AssetMapping, BotJsonConfig, ExchangeName, PointsBotError, PointsBotResult, PositionSide,
-    TickerDirection,
+    parse_decimal, AssetMapping, BotJsonConfig, ExchangeName, PointsBotError, PointsBotResult,
+    PositionSide, TickerDirection,
 };
 use async_trait::async_trait;
 use log::info;
@@ -88,7 +88,10 @@ pub struct FetcherExtended {
 
 impl FetcherExtended {
     pub fn new(config: &BotJsonConfig) -> Self {
-        let client = HttpClient::new("https://api.starknet.extended.exchange/api/v1".to_string(), Some(1000));
+        let client = HttpClient::new(
+            "https://api.starknet.extended.exchange/api/v1".to_string(),
+            Some(1000),
+        );
 
         let extended_api_key = config.extended.as_ref().map(|ext| ext.api_key.clone());
 
@@ -118,12 +121,30 @@ impl FetcherExtended {
             _ => return None,
         };
 
-        let cum_funding = parse_decimal(&pos.realized_pnl).ok()?
-            + parse_decimal(&pos.entry_price).ok()? * parse_decimal(&pos.size).ok()?;
+        let taker_fee = parse_decimal(&pos.entry_price).ok()?
+            * parse_decimal(&pos.size).ok()?
+            * BotJsonConfig::get_taker_fee(ExchangeName::Extended);
+        let cum_funding = parse_decimal(&pos.realized_pnl).ok()? + taker_fee;
+
+        info!(
+            "[FETCHER] Funding calculation for Extended, cum_funding={} taker_fee={}",
+            cum_funding, taker_fee
+        );
+        info!(
+            "[FETCHER] rpnl={} pos={} entrypx={} size={} ",
+            parse_decimal(&pos.realized_pnl).ok()?,
+            parse_decimal(&pos.entry_price).ok()? * parse_decimal(&pos.size).ok()?,
+            parse_decimal(&pos.entry_price).ok()?,
+            parse_decimal(&pos.size).ok()?
+        );
 
         Some(Position {
-            symbol: AssetMapping::map_ticker(ExchangeName::Extended, &pos.market, TickerDirection::ToCanonical)
-                .unwrap_or_else(|| pos.market.clone()),
+            symbol: AssetMapping::map_ticker(
+                ExchangeName::Extended,
+                &pos.market,
+                TickerDirection::ToCanonical,
+            )
+            .unwrap_or_else(|| pos.market.clone()),
             side,
             size: parse_decimal(&pos.size).ok()?.abs(),
             entry_price: parse_decimal(&pos.entry_price).ok()?,
@@ -143,8 +164,12 @@ impl Fetcher for FetcherExtended {
 
     async fn get_account_data(&self) -> PointsBotResult<AccountData> {
         let headers = self.get_auth_headers()?;
-        let balance_response = self.client.get("/user/balance", Some(headers.clone())).await?;
-        let balance_data: ExtendedResponse<ExtendedBalanceData> = self.client.parse_json(balance_response).await?;
+        let balance_response = self
+            .client
+            .get("/user/balance", Some(headers.clone()))
+            .await?;
+        let balance_data: ExtendedResponse<ExtendedBalanceData> =
+            self.client.parse_json(balance_response).await?;
         if balance_data.status != "OK" {
             let error_msg = balance_data
                 .error
@@ -174,7 +199,11 @@ impl Fetcher for FetcherExtended {
         };
         let total_position_value = positions_vec
             .iter()
-            .map(|pos| pos.position_value.parse::<Decimal>().unwrap_or(Decimal::ZERO))
+            .map(|pos| {
+                pos.position_value
+                    .parse::<Decimal>()
+                    .unwrap_or(Decimal::ZERO)
+            })
             .sum::<Decimal>();
         let total_margin = positions_vec
             .iter()
@@ -205,8 +234,12 @@ impl Fetcher for FetcherExtended {
 
     async fn get_markets(&self) -> PointsBotResult<Vec<MarketInfo>> {
         let headers = self.get_auth_headers()?;
-        let response = self.client.get("/info/markets", Some(headers.clone())).await?;
-        let data: ExtendedResponse<Vec<ExtendedMarketData>> = self.client.parse_json(response).await?;
+        let response = self
+            .client
+            .get("/info/markets", Some(headers.clone()))
+            .await?;
+        let data: ExtendedResponse<Vec<ExtendedMarketData>> =
+            self.client.parse_json(response).await?;
 
         if data.status != "OK" {
             let error_msg = data
@@ -223,8 +256,12 @@ impl Fetcher for FetcherExtended {
 
         let mut market_infos = Vec::new();
         for market in markets {
-            let symbol = AssetMapping::map_ticker(ExchangeName::Extended, &market.name, TickerDirection::ToCanonical)
-                .unwrap_or_else(|| market.name.clone());
+            let symbol = AssetMapping::map_ticker(
+                ExchangeName::Extended,
+                &market.name,
+                TickerDirection::ToCanonical,
+            )
+            .unwrap_or_else(|| market.name.clone());
 
             let funding_rate = Decimal::from_str(&market.market_stats.funding_rate)?;
             let bid_price = Decimal::from_str(&market.market_stats.bid_price)?;
@@ -242,7 +279,9 @@ impl Fetcher for FetcherExtended {
                 funding_rate,
                 sz_decimals: Decimal::from(market.asset_precision),
                 px_decimals: Decimal::ZERO,
-                min_order_size_change: Decimal::from_str(&market.trading_config.min_order_size_change)?,
+                min_order_size_change: Decimal::from_str(
+                    &market.trading_config.min_order_size_change,
+                )?,
             });
         }
 

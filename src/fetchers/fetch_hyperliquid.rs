@@ -1,14 +1,13 @@
 use async_trait::async_trait;
 use chrono::Utc;
-use log::info;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::base::{AccountData, Fetcher, HttpClient, MarketInfo, Position};
 use crate::{
-    parse_decimal, AssetMapping, BotJsonConfig, ExchangeName, PointsBotError, PointsBotResult, PositionSide,
-    TickerDirection,
+    parse_decimal, AssetMapping, BotJsonConfig, ExchangeName, PointsBotError, PointsBotResult,
+    PositionSide, TickerDirection,
 };
 
 #[derive(Debug, Deserialize)]
@@ -123,7 +122,8 @@ impl FetcherHyperliquid {
         let entry_price = parse_decimal(&position.entry_px).ok()?;
         let unrealized_pnl = parse_decimal(&position.unrealized_pnl).ok()?;
         let margin_used = parse_decimal(position.margin_used.as_deref().unwrap_or("0")).ok()?;
-        let liquidation_price = parse_decimal(position.liquidation_px.as_deref().unwrap_or("0")).ok()?;
+        let liquidation_price =
+            parse_decimal(position.liquidation_px.as_deref().unwrap_or("0")).ok()?;
         Some(Position {
             symbol: AssetMapping::map_ticker(
                 ExchangeName::Hyperliquid,
@@ -162,7 +162,10 @@ impl Fetcher for FetcherHyperliquid {
             "user": address
         });
 
-        let response = self.client.post("/info", &payload.to_string(), None).await?;
+        let response = self
+            .client
+            .post("/info", &payload.to_string(), None)
+            .await?;
         let response_body = response.text().await?;
         let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
 
@@ -197,7 +200,10 @@ impl Fetcher for FetcherHyperliquid {
             "type": "metaAndAssetCtxs"
         });
 
-        let response = self.client.post("/info", &payload.to_string(), None).await?;
+        let response = self
+            .client
+            .post("/info", &payload.to_string(), None)
+            .await?;
         let data: serde_json::Value = self.client.parse_json(response).await?;
 
         let data_array = data.as_array().ok_or_else(|| PointsBotError::Parse {
@@ -218,8 +224,8 @@ impl Fetcher for FetcherHyperliquid {
                 source: Some(Box::new(e)),
             })?;
 
-        let asset_ctxs: Vec<HyperliquidAssetCtx> =
-            serde_json::from_value(data_array[1].clone()).map_err(|e| PointsBotError::Parse {
+        let asset_ctxs: Vec<HyperliquidAssetCtx> = serde_json::from_value(data_array[1].clone())
+            .map_err(|e| PointsBotError::Parse {
                 msg: "Failed to parse asset contexts".to_string(),
                 source: Some(Box::new(e)),
             })?;

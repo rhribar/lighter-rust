@@ -1,32 +1,29 @@
 use super::base::{AccountData, Fetcher, MarketInfo, Position};
 use crate::{
-    AssetMapping, BotJsonConfig, ExchangeName, HttpClient, PointsBotError, PointsBotResult, PositionSide,
-    TickerDirection,
+    AssetMapping, BotJsonConfig, ExchangeName, HttpClient, PointsBotError, PointsBotResult,
+    PositionSide, TickerDirection,
 };
 use api_client::LighterClient;
 use async_trait::async_trait;
 use async_tungstenite::{tokio::connect_async, tungstenite::Message};
-use futures::{SinkExt, StreamExt};
+use futures::{future::join_all, SinkExt, StreamExt};
 use log::info;
-use reqwest::header::{HeaderMap, HeaderValue};
 use rust_decimal::{prelude::FromPrimitive, Decimal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     io::Write,
     str::FromStr,
 };
 use tokio::time::{timeout, Duration};
-use futures::future::join_all;
-use std::collections::BTreeMap;
 
 pub struct FetcherLighter {
     client: HttpClient,
     wallet: Option<String>,
     account_index: i64,
-    auth_token: String,
+    sign_client: LighterClient,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,13 +93,25 @@ pub fn read_last_change() -> io::Result<u64> {
 
 impl FetcherLighter {
     pub fn new(config: &BotJsonConfig) -> Self {
-        let client = HttpClient::new("https://mainnet.zklighter.elliot.ai/api/v1/".to_string(), Some(1000));
+        let client = HttpClient::new(
+            "https://mainnet.zklighter.elliot.ai/api/v1/".to_string(),
+            Some(1000),
+        );
 
         let wallet = config.wallet_address.clone();
 
-        let lighter_api_key = config.lighter.as_ref().map(|lighter| lighter.api_key.clone());
-        let account_index = config.lighter.as_ref().map(|lighter| lighter.account_index as i64);
-        let api_key_index = config.lighter.as_ref().map(|lighter| lighter.api_key_index as u8);
+        let lighter_api_key = config
+            .lighter
+            .as_ref()
+            .map(|lighter| lighter.api_key.clone());
+        let account_index = config
+            .lighter
+            .as_ref()
+            .map(|lighter| lighter.account_index as i64);
+        let api_key_index = config
+            .lighter
+            .as_ref()
+            .map(|lighter| lighter.api_key_index as u8);
 
         let sign_client = LighterClient::new(
             "https://mainnet.zklighter.elliot.ai".to_string(),
@@ -112,16 +121,11 @@ impl FetcherLighter {
         )
         .expect("Failed to create LighterClient");
 
-        let default_expiry_seconds = 60 * 60; // 1 hour
-        let auth_token = sign_client
-            .create_auth_token(default_expiry_seconds)
-            .expect("Failed to create auth token");
-
         Self {
             client,
             wallet,
             account_index: account_index.unwrap(),
-            auth_token,
+            sign_client,
         }
     }
 }
@@ -142,15 +146,20 @@ impl Fetcher for FetcherLighter {
         let resp_text = resp.text().await?;
         let api_resp: ApiAccountResponse = serde_json::from_str(&resp_text)?;
         let account = &api_resp.accounts[0];
-        let funding_map = fetch_and_sum_funding_paid(&self.client, self.account_index, &self.auth_token).await?;
+        let funding_map =
+            fetch_and_sum_funding_paid(&self.client, self.account_index, &self.sign_client).await?;
 
-        info!("[FETCHER] Positions fundings paid, funding_map={:?}", funding_map);
+        info!(
+            "[FETCHER] Positions fundings paid, funding_map={:?}",
+            funding_map
+        );
 
         let positions = account
             .positions
             .iter()
             .filter_map(|p| {
                 let size = Decimal::from_str(&p.position).unwrap_or(Decimal::ZERO);
+                // info!("[FETCHER] symbol={} size={}", &p.symbol, size);
                 if size.is_zero() {
                     None
                 } else {
@@ -168,10 +177,16 @@ impl Fetcher for FetcherLighter {
                             _ => PositionSide::Long,
                         },
                         entry_price: Decimal::from_str(&p.avg_entry_price).unwrap_or(Decimal::ZERO),
-                        unrealized_pnl: Decimal::from_str(&p.unrealized_pnl).unwrap_or(Decimal::ZERO),
+                        unrealized_pnl: Decimal::from_str(&p.unrealized_pnl)
+                            .unwrap_or(Decimal::ZERO),
                         margin_used: Decimal::ZERO,
                         liquidation_price: Decimal::from_str(&p.liquidation_price).ok(),
-                        cum_funding: Some(funding_map.get(&p.market_id).cloned().unwrap_or(Decimal::ZERO)),
+                        cum_funding: Some(
+                            funding_map
+                                .get(&p.market_id)
+                                .cloned()
+                                .unwrap_or(Decimal::ZERO),
+                        ),
                     })
                 }
             })
@@ -179,12 +194,13 @@ impl Fetcher for FetcherLighter {
 
         Ok(AccountData {
             account_value: Decimal::from_str(&account.total_asset_value).unwrap_or(Decimal::ZERO)
-                * Decimal::from_f64(0.99).unwrap(),
+                * Decimal::from_f64(0.99).unwrap(), // offset for margin
             total_margin_used: Decimal::ZERO,
             total_ntl_pos: Decimal::ZERO,
             total_raw_usd: Decimal::ZERO,
             withdrawable: Decimal::from_str(&account.collateral).unwrap_or(Decimal::ZERO),
-            available_balance: Decimal::from_str(&account.available_balance).unwrap_or(Decimal::ZERO),
+            available_balance: Decimal::from_str(&account.available_balance)
+                .unwrap_or(Decimal::ZERO),
             positions,
             exchange: ExchangeName::Lighter,
             timestamp: 0,
@@ -203,15 +219,23 @@ impl Fetcher for FetcherLighter {
         }
 
         let time = std::time::Instant::now();
-        fetch_order_books_with_sockets(&mut builders, &market_ids, 30).await?;
+        fetch_order_books_with_sockets(&mut builders, &market_ids, 10).await?;
         let elapsed = time.elapsed();
-        info!("[FETCHER] Fetching order books, elapsed_time={:?}", elapsed);
+        info!(
+            "[FETCHER] Fetching order books, elapsed_time={:?} count={}",
+            elapsed,
+            builders.len()
+        );
 
         Ok(builders
             .into_iter()
             .map(|(_, b)| {
-                let symbol = AssetMapping::map_ticker(ExchangeName::Lighter, &b.symbol, TickerDirection::ToCanonical)
-                    .unwrap_or_else(|| b.symbol.clone());
+                let symbol = AssetMapping::map_ticker(
+                    ExchangeName::Lighter,
+                    &b.symbol,
+                    TickerDirection::ToCanonical,
+                )
+                .unwrap_or_else(|| b.symbol.clone());
                 MarketInfo {
                     exchange: ExchangeName::Lighter,
                     exchange_id: b.exchange_id,
@@ -231,7 +255,9 @@ impl Fetcher for FetcherLighter {
     }
 }
 
-async fn fetch_market_details(http_client: &crate::HttpClient) -> PointsBotResult<HashMap<u32, MarketInfoBuilder>> {
+async fn fetch_market_details(
+    http_client: &crate::HttpClient,
+) -> PointsBotResult<HashMap<u32, MarketInfoBuilder>> {
     let rest_resp = http_client.get("orderBookDetails", None).await?;
     let rest_text = rest_resp.text().await?;
     let details: Value = serde_json::from_str(&rest_text)?;
@@ -272,11 +298,10 @@ async fn fetch_market_details(http_client: &crate::HttpClient) -> PointsBotResul
     Ok(builders)
 }
 
-
 pub async fn fetch_and_sum_funding_paid(
     http_client: &HttpClient,
     account_index: i64,
-    auth_token: &str,
+    sign_client: &LighterClient,
 ) -> PointsBotResult<HashMap<u32, Decimal>> {
     let last_change_ts: u64 = match read_last_change() {
         Ok(ts) => ts,
@@ -284,11 +309,44 @@ pub async fn fetch_and_sum_funding_paid(
     };
 
     let url = format!("positionFunding?account_index={}&limit=100", account_index);
+    let max_attempts = 20;
+    for attempt in 1..=max_attempts {
+        match fetch_funding_once(http_client, sign_client, &url, last_change_ts).await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                if attempt == max_attempts {
+                    return Err(e);
+                } else {
+                    log::info!("[FETCHER] Funding fetch failed, attempt {}: {}", attempt, e);
+                    continue;
+                }
+            }
+        }
+    }
+    Err(PointsBotError::Unknown {
+        msg: "Funding fetch failed after retries".to_string(),
+        source: None,
+    })
+}
+
+async fn fetch_funding_once(
+    http_client: &HttpClient,
+    sign_client: &LighterClient,
+    url: &str,
+    last_change_ts: u64,
+) -> PointsBotResult<HashMap<u32, Decimal>> {
+    let auth_token =
+        sign_client
+            .create_auth_token(60 * 60)
+            .map_err(|e| PointsBotError::Config {
+                msg: format!("Failed to create auth token: {:?}", e),
+                source: None,
+            })?;
     let mut headers: HashMap<String, String> = HashMap::new();
     headers.insert("accept".to_string(), "application/json".to_string());
-    headers.insert("authorization".to_string(), auth_token.to_string());
+    headers.insert("authorization".to_string(), auth_token);
 
-    let resp = http_client.get(&url, Some(headers)).await?;
+    let resp = http_client.get(url, Some(headers)).await?;
     let status_code = resp.status().as_u16();
     let resp_text = resp.text().await?;
     let json: Value = serde_json::from_str(&resp_text)?;
@@ -316,7 +374,9 @@ pub async fn fetch_and_sum_funding_paid(
     Ok(result)
 }
 
-async fn fetch_lighter_funding_rates(http_client: &crate::HttpClient) -> PointsBotResult<Vec<(u32, String, f64)>> {
+async fn fetch_lighter_funding_rates(
+    http_client: &crate::HttpClient,
+) -> PointsBotResult<Vec<(u32, String, f64)>> {
     let rest_resp = http_client.get("funding-rates", None).await?;
     let rest_text = rest_resp.text().await?;
     let json: serde_json::Value = serde_json::from_str(&rest_text)?;
@@ -353,7 +413,13 @@ async fn fetch_order_books_with_sockets(
         let handle = tokio::spawn(async move {
             let (ws_stream, _) = connect_async("wss://mainnet.zklighter.elliot.ai/stream").await?;
             let (mut write, mut read) = ws_stream.split();
-            subscribe_and_process_order_books(&mut write, &mut read, &mut batch_builders, &chunk_vec).await;
+            subscribe_and_process_order_books(
+                &mut write,
+                &mut read,
+                &mut batch_builders,
+                &chunk_vec,
+            )
+            .await;
             Ok::<HashMap<u32, MarketInfoBuilder>, PointsBotError>(batch_builders)
         });
 
@@ -377,18 +443,24 @@ async fn fetch_order_books_with_sockets(
 
 async fn subscribe_and_process_order_books(
     write: &mut (impl futures::Sink<Message, Error = async_tungstenite::tungstenite::Error> + Unpin),
-    read: &mut (impl futures::Stream<Item = Result<Message, async_tungstenite::tungstenite::Error>> + Unpin),
+    read: &mut (impl futures::Stream<Item = Result<Message, async_tungstenite::tungstenite::Error>>
+              + Unpin),
     builders: &mut HashMap<u32, MarketInfoBuilder>,
     market_ids: &[u32],
 ) {
     let mut processed = HashSet::new();
     for &market_id in market_ids {
-        if processed.contains(&market_id) { continue; }
+        if processed.contains(&market_id) {
+            continue;
+        }
 
-        let _ = write.send(Message::Text(
-            serde_json::json!({"type": "subscribe", "channel": format!("order_book/{}", market_id)})
-                .to_string().into()
-        )).await;
+        let _ = write
+            .send(Message::Text(
+                serde_json::json!({"type": "subscribe", "channel": format!("order_book/{}", market_id)})
+                    .to_string()
+                    .into(),
+            ))
+            .await;
 
         let mut bids = BTreeMap::new();
         let mut asks = BTreeMap::new();
@@ -406,22 +478,38 @@ async fn subscribe_and_process_order_books(
 
             if msg_type == "ping" {
                 info!("[FETCHER] Received ping");
-                let _ = write.send(Message::Text("{\"type\":\"pong\"}".to_string().into())).await;
+                let _ = write
+                    .send(Message::Text("{\"type\":\"pong\"}".to_string().into()))
+                    .await;
                 continue;
             }
 
             if msg_type == "subscribed/order_book" {
                 let channel = v["channel"].as_str().unwrap_or("");
-                let id = channel.split(':').nth(1).and_then(|s| s.parse::<u32>().ok());
+                let id = channel
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.parse::<u32>().ok());
                 if id == Some(market_id) {
-                    update_order_book_side(v["order_book"]["bids"].as_array().unwrap_or(&Vec::new()), &mut bids);
-                    update_order_book_side(v["order_book"]["asks"].as_array().unwrap_or(&Vec::new()), &mut asks);
+                    update_order_book_side(
+                        v["order_book"]["bids"].as_array().unwrap_or(&Vec::new()),
+                        &mut bids,
+                    );
+                    update_order_book_side(
+                        v["order_book"]["asks"].as_array().unwrap_or(&Vec::new()),
+                        &mut asks,
+                    );
                     snapshot_loaded = true;
                 }
             }
 
-            let best_bid = bids.iter().rev().find(|(_, &sz)| sz >= Decimal::from_f64(0.05).unwrap_or(Decimal::ZERO));
-            let best_ask = asks.iter().find(|(_, &sz)| sz >= Decimal::from_f64(0.05).unwrap_or(Decimal::ZERO));
+            let best_bid = bids
+                .iter()
+                .rev()
+                .find(|(_, &sz)| sz >= Decimal::from_f64(0.05).unwrap_or(Decimal::ZERO));
+            let best_ask = asks
+                .iter()
+                .find(|(_, &sz)| sz >= Decimal::from_f64(0.05).unwrap_or(Decimal::ZERO));
             if snapshot_loaded {
                 if let Some(b) = builders.get_mut(&market_id) {
                     b.bid_price = best_bid.map(|(p, _)| *p);
@@ -444,8 +532,12 @@ async fn subscribe_and_process_order_books(
 
 fn update_order_book_side(entries: &[Value], book: &mut BTreeMap<Decimal, Decimal>) {
     for entry in entries {
-        let price = entry["price"].as_str().and_then(|s| Decimal::from_str(s).ok());
-        let size = entry["size"].as_str().and_then(|s| Decimal::from_str(s).ok());
+        let price = entry["price"]
+            .as_str()
+            .and_then(|s| Decimal::from_str(s).ok());
+        let size = entry["size"]
+            .as_str()
+            .and_then(|s| Decimal::from_str(s).ok());
         if let (Some(p), Some(s)) = (price, size) {
             if s == Decimal::ZERO {
                 book.remove(&p);
@@ -460,8 +552,11 @@ async fn unsubscribe_from_order_book(
     write: &mut (impl futures::Sink<Message, Error = async_tungstenite::tungstenite::Error> + Unpin),
     market_id: u32,
 ) {
-    let _ = write.send(Message::Text(
-        serde_json::json!({"type": "unsubscribe", "channel": format!("order_book/{}", market_id)})
-            .to_string().into()
-    )).await;
+    let _ = write
+        .send(Message::Text(
+            serde_json::json!({"type": "unsubscribe", "channel": format!("order_book/{}", market_id)})
+                .to_string()
+                .into(),
+        ))
+        .await;
 }

@@ -5,7 +5,8 @@ use starknet_crypto::PoseidonHasher;
 
 use std::sync::LazyLock;
 
-static MESSAGE_FELT: LazyLock<Felt> = LazyLock::new(|| cairo_short_string_to_felt("StarkNet Message").unwrap());
+static MESSAGE_FELT: LazyLock<Felt> =
+    LazyLock::new(|| cairo_short_string_to_felt("StarkNet Message").unwrap());
 
 pub trait Hashable {
     const SELECTOR: Felt;
@@ -13,7 +14,11 @@ pub trait Hashable {
 }
 
 pub trait OffChainMessage: Hashable {
-    fn message_hash(&self, stark_domain: &StarknetDomain, public_key: Felt) -> Result<Felt, String> {
+    fn message_hash(
+        &self,
+        stark_domain: &StarknetDomain,
+        public_key: Felt,
+    ) -> Result<Felt, String> {
         let mut hasher = PoseidonHasher::new();
         hasher.update(*MESSAGE_FELT);
         hasher.update(stark_domain.hash());
@@ -167,7 +172,9 @@ mod tests {
 
     #[test]
     fn test_starknet_domain_selector() {
-        let expected = Felt::from_hex_unchecked("0x1ff2f602e42168014d405a94f75e8a93d640751d71d16311266e140d8b0a210");
+        let expected = Felt::from_hex_unchecked(
+            "0x1ff2f602e42168014d405a94f75e8a93d640751d71d16311266e140d8b0a210",
+        );
         let actual = StarknetDomain::SELECTOR;
         assert_eq!(expected, actual);
     }
@@ -182,20 +189,25 @@ mod tests {
         };
 
         let actual = domain.hash();
-        let expected = felt!("2788850828067604540663615870177667078542240404906059806659101905868929188327");
+        let expected =
+            felt!("2788850828067604540663615870177667078542240404906059806659101905868929188327");
         assert_eq!(actual, expected, "Hashes do not match for StarknetDomain");
     }
 
     #[test]
     fn test_order_selector() {
-        let expected = Felt::from_hex_unchecked("0x36da8d51815527cabfaa9c982f564c80fa7429616739306036f1f9b608dd112");
+        let expected = Felt::from_hex_unchecked(
+            "0x36da8d51815527cabfaa9c982f564c80fa7429616739306036f1f9b608dd112",
+        );
         let actual = Order::SELECTOR;
         assert_eq!(expected, actual);
     }
 
     #[test]
     fn test_transfer_args_selector() {
-        let expected = Felt::from_hex_unchecked("0x1db88e2709fdf2c59e651d141c3296a42b209ce770871b40413ea109846a3b4");
+        let expected = Felt::from_hex_unchecked(
+            "0x1db88e2709fdf2c59e651d141c3296a42b209ce770871b40413ea109846a3b4",
+        );
         let actual = TransferArgs::SELECTOR;
         assert_eq!(expected, actual);
     }
@@ -214,8 +226,10 @@ mod tests {
         };
 
         let actual = transfer_args.hash();
-        let expected =
-            Felt::from_dec_str("2223969487713427665389808888239017784545324676732964616876966103908214316949").unwrap();
+        let expected = Felt::from_dec_str(
+            "2223969487713427665389808888239017784545324676732964616876966103908214316949",
+        )
+        .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
     }
 
@@ -232,12 +246,17 @@ mod tests {
             salt: Felt::from_dec_str("6").unwrap(),
         };
 
-        let user_key =
-            Felt::from_dec_str("2629686405885377265612250192330550814166101744721025672593857097107510831364").unwrap();
+        let user_key = Felt::from_dec_str(
+            "2629686405885377265612250192330550814166101744721025672593857097107510831364",
+        )
+        .unwrap();
 
-        let actual = transfer_args.message_hash(&SEPOLIA_DOMAIN, user_key).unwrap();
+        let actual = transfer_args
+            .message_hash(&SEPOLIA_DOMAIN, user_key)
+            .unwrap();
 
-        let expected = felt_hex!("0x56c7b21d13b79a33d7700dda20e22246c25e89818249504148174f527fc3f8f");
+        let expected =
+            felt_hex!("0x56c7b21d13b79a33d7700dda20e22246c25e89818249504148174f527fc3f8f");
         assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
     }
 
@@ -262,8 +281,10 @@ mod tests {
         };
 
         let actual = order.hash();
-        let expected =
-            Felt::from_dec_str("1329353150252109345267997901008558234696410103652961347079636617692652241760").unwrap();
+        let expected = Felt::from_dec_str(
+            "1329353150252109345267997901008558234696410103652961347079636617692652241760",
+        )
+        .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for Order");
     }
 
@@ -287,19 +308,25 @@ mod tests {
             salt: Felt::from_dec_str("9").unwrap(),
         };
 
-        let user_key =
-            Felt::from_dec_str("1528491859474308181214583355362479091084733880193869257167008343298409336538").unwrap();
+        let user_key = Felt::from_dec_str(
+            "1528491859474308181214583355362479091084733880193869257167008343298409336538",
+        )
+        .unwrap();
 
         let hash = order.message_hash(&SEPOLIA_DOMAIN, user_key).unwrap();
-        let expected_hash =
-            Felt::from_dec_str("2788960362996410178586013462192086205585543858281504820767681025777602529597").unwrap();
+        let expected_hash = Felt::from_dec_str(
+            "2788960362996410178586013462192086205585543858281504820767681025777602529597",
+        )
+        .unwrap();
         info!("{}", expected_hash.to_hex_string());
         assert_eq!(hash, expected_hash);
     }
 
     #[test]
     fn test_withdrawal_args_selector() {
-        let expected = Felt::from_hex_unchecked("0x250a5fa378e8b771654bd43dcb34844534f9d1e29e16b14760d7936ea7f4b1d");
+        let expected = Felt::from_hex_unchecked(
+            "0x250a5fa378e8b771654bd43dcb34844534f9d1e29e16b14760d7936ea7f4b1d",
+        );
         let actual = WithdrawalArgs::SELECTOR;
         assert_eq!(expected, actual);
     }
@@ -307,7 +334,10 @@ mod tests {
     #[test]
     fn test_withdrawal_args_hashing() {
         let withdrawal_args = WithdrawalArgs {
-            recipient: Felt::from_hex("0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da").unwrap(),
+            recipient: Felt::from_hex(
+                "0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da",
+            )
+            .unwrap(),
             position_id: PositionId { value: 1 },
             collateral_id: AssetId {
                 value: Felt::from_dec_str("4").unwrap(),
@@ -318,7 +348,9 @@ mod tests {
         };
 
         let actual = withdrawal_args.hash();
-        let expected = Felt::from_hex("0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec").unwrap();
+        let expected =
+            Felt::from_hex("0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec")
+                .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for WithdrawalArgs");
     }
 }

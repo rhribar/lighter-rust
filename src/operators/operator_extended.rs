@@ -3,11 +3,13 @@ use std::{collections::HashMap, str::FromStr};
 use crate::{
     fetchers::MarketInfo,
     operators::{
-        init_extended_markets::{extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc, Side},
+        init_extended_markets::{
+            extended_markets, hex_to_felt, init_extended_markets, sign_limit_ioc, Side,
+        },
         Operator, OrderRequest, OrderResponse,
     },
-    AssetMapping, BotJsonConfig, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError, PointsBotResult,
-    PositionSide, TickerDirection,
+    AssetMapping, BotJsonConfig, ChangeLeverageRequest, ExchangeName, OrderStatus, PointsBotError,
+    PointsBotResult, PositionSide, TickerDirection,
 };
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -33,8 +35,14 @@ impl OperatorExtended {
         Self {
             client,
             api_key: config.extended.as_ref().map(|ext| ext.api_key.clone()),
-            stark_private_key: config.extended.as_ref().map(|ext| ext.stark_private_key.clone()),
-            stark_public_key: config.extended.as_ref().map(|ext| ext.stark_public_key.clone()),
+            stark_private_key: config
+                .extended
+                .as_ref()
+                .map(|ext| ext.stark_private_key.clone()),
+            stark_public_key: config
+                .extended
+                .as_ref()
+                .map(|ext| ext.stark_public_key.clone()),
             vault_id: config.extended.as_ref().and_then(|ext| Some(ext.vault_id)),
         }
     }
@@ -64,12 +72,11 @@ impl Operator for OperatorExtended {
             TickerDirection::ToExchange,
         )
         .unwrap_or_else(|| order.market.symbol.clone());
-        let market_config =
-            extended_markets()
-                .get(&order.market.symbol)
-                .ok_or_else(|| PointsBotError::InvalidParameter {
-                    msg: format!("Market {} not found", order.market.symbol),
-                })?;
+        let market_config = extended_markets()
+            .get(&order.market.symbol)
+            .ok_or_else(|| PointsBotError::InvalidParameter {
+                msg: format!("Market {} not found", order.market.symbol),
+            })?;
 
         let side = match order.side {
             PositionSide::Long => Side::Buy,
@@ -82,7 +89,8 @@ impl Operator for OperatorExtended {
         let stark_priv = hex_to_felt(self.stark_private_key.as_ref().unwrap());
 
         let expiry_ts_ms = Utc::now() + Duration::hours(8);
-        let correct_expiry_hours = ((expiry_ts_ms.timestamp_millis() as f64) / 1000.0 / 3600.0).ceil();
+        let correct_expiry_hours =
+            ((expiry_ts_ms.timestamp_millis() as f64) / 1000.0 / 3600.0).ceil();
         let hours_in_14_days = 14.0 * 24.0;
         let correct_expiry_hours_plus_14_days = correct_expiry_hours + hours_in_14_days;
 
@@ -140,7 +148,10 @@ impl Operator for OperatorExtended {
         headers.insert("User-Agent".to_string(), "bot-rs/1.0".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
 
-        info!("[FETCHER] Extended create_order request payload: {:?}", order_payload);
+        info!(
+            "[FETCHER] Extended create_order request payload: {:?}",
+            order_payload
+        );
 
         let response = self
             .client
@@ -155,8 +166,8 @@ impl Operator for OperatorExtended {
                     msg: format!("Response error: {e}"),
                     source: Some(Box::new(e)),
                 })?;
-                let json_response: serde_json::Value =
-                    serde_json::from_str(&response_text).map_err(|e| PointsBotError::Parse {
+                let json_response: serde_json::Value = serde_json::from_str(&response_text)
+                    .map_err(|e| PointsBotError::Parse {
                         msg: format!("Failed to parse JSON: {e}"),
                         source: Some(Box::new(e)),
                     })?;
@@ -188,8 +199,12 @@ impl Operator for OperatorExtended {
             source: None,
         })?;
         let body = serde_json::to_string(&ChangeLeverageRequest {
-            market: AssetMapping::map_ticker(ExchangeName::Extended, &market.symbol, TickerDirection::ToExchange)
-                .unwrap_or(market.symbol),
+            market: AssetMapping::map_ticker(
+                ExchangeName::Extended,
+                &market.symbol,
+                TickerDirection::ToExchange,
+            )
+            .unwrap_or(market.symbol),
             leverage: leverage.to_string(),
         })
         .map_err(|e| PointsBotError::Parse {
@@ -220,9 +235,11 @@ impl Operator for OperatorExtended {
                 source: Some(Box::new(e)),
             })?;
 
-        match serde_json::from_str::<serde_json::Value>(&response_text).map_err(|e| PointsBotError::Parse {
-            msg: format!("Failed to parse JSON: {e}"),
-            source: Some(Box::new(e)),
+        match serde_json::from_str::<serde_json::Value>(&response_text).map_err(|e| {
+            PointsBotError::Parse {
+                msg: format!("Failed to parse JSON: {e}"),
+                source: Some(Box::new(e)),
+            }
         })?["status"]
             .as_str()
         {
