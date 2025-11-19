@@ -121,13 +121,6 @@ impl FetcherExtended {
         let cum_funding = parse_decimal(&pos.realized_pnl).ok()?
             + parse_decimal(&pos.entry_price).ok()? * parse_decimal(&pos.size).ok()?;
 
-        info!(
-            "Calculated cumulative funding: cum_funding={} realized_pnl={} fees={}",
-            cum_funding,
-            &pos.realized_pnl,
-            parse_decimal(&pos.entry_price).ok()? * parse_decimal(&pos.size).ok()?
-        );
-
         Some(Position {
             symbol: AssetMapping::map_ticker(ExchangeName::Extended, &pos.market, TickerDirection::ToCanonical)
                 .unwrap_or_else(|| pos.market.clone()),

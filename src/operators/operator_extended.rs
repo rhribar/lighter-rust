@@ -148,6 +148,7 @@ impl Operator for OperatorExtended {
             .await;
 
         info!("[FETCHER] Extended create_order response: {:?}", response);
+
         match response {
             Ok(resp) => {
                 let response_text = resp.text().await.map_err(|e| PointsBotError::Unknown {

@@ -41,7 +41,7 @@ impl Operator for OperatorLighter {
     }
 
     async fn create_order(&self, order: OrderRequest) -> PointsBotResult<OrderResponse> {
-        info!("📝 Preparing to create order on Lighter... {:?}", order);
+        info!("[OPERATOR] Placing order, order={:?}", order);
         let mut last_err: Option<PointsBotError> = None;
         for attempt in 1..=20 {
             match self.submit_lighter_order(&order).await {
@@ -49,7 +49,7 @@ impl Operator for OperatorLighter {
                 Err(e) => {
                     let msg = format!("{}", e);
                     if msg.contains("invalid signature") {
-                        info!("Attempt {}: Invalid signature, retrying...", attempt);
+                        info!("[OPERATOR] Signature invalid, attempt_number={}", attempt);
                         last_err = Some(e);
                         continue;
                     } else {
@@ -71,13 +71,14 @@ impl Operator for OperatorLighter {
 
         for attempt in 1..=10 {
             let res = self.client.update_leverage(exchange_id_u8, lev, 0).await;
+
             match res {
                 Ok(val) => {
-                    info!("Leverage updated: {}", val);
+                    info!("[OPERATOR] Leverage successfully updated, leverage={}", val);
                     return Ok(());
                 }
                 Err(e) => {
-                    info!("Attempt {}: Leverage update failed, retrying...", attempt);
+                    info!("[OPERATOR] Signature invalid for update leverage, attempt_number={}", attempt);
                     last_err = Some(PointsBotError::Unknown {
                         msg: format!("SDK update_leverage error: {e}"),
                         source: None,
@@ -120,12 +121,12 @@ impl OperatorLighter {
             trigger_price: 0,
         };
 
-        info!("Creating Lighter order: {:?}", create_order);
+        info!("[OPERATOR] Placing Lighter order: {:?}", create_order);
 
         let response = match self.client.create_order(create_order).await {
             Ok(res) => res,
             Err(e) => {
-                println!("Full SDK error: {:?}", e);
+                info!("[OPERATOR] SDK create_order error: {:?}", e);
                 return Err(PointsBotError::Unknown {
                     msg: format!("SDK create_order error: {e}"),
                     source: None,
@@ -133,18 +134,16 @@ impl OperatorLighter {
             }
         };
 
-        info!("✅ Limit order submitted!");
-        info!("📥 Response:");
-        info!("{}", serde_json::to_string_pretty(&response)?);
+        info!("[OPERATOR] Lighter order response: {}", serde_json::to_string_pretty(&response)?);
 
         let code = response["code"].as_i64().unwrap_or_default();
         let tx_hash = response["tx_hash"].as_str().unwrap_or("").to_string();
         let message = response["message"].as_str().unwrap_or("").to_string();
 
         if code != 200 {
-            info!("\n⚠️  Order submission returned code: {}", code);
+            info!("[OPERATOR] Order submission returned code: {}", code);
             if !message.is_empty() {
-                info!("  Message: {}", message);
+                info!("[OPERATOR] Message: {}", message);
             }
             return Err(PointsBotError::Unknown {
                 msg: format!("Order submission failed: code {} - {}", code, message),

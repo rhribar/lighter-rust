@@ -144,7 +144,7 @@ impl Fetcher for FetcherLighter {
         let account = &api_resp.accounts[0];
         let funding_map = fetch_and_sum_funding_paid(&self.client, self.account_index, &self.auth_token).await?;
 
-        info!("[FETCHER] Calculating funding for positions since timestamp, funding_map={:?}", funding_map);
+        info!("[FETCHER] Positions fundings paid, funding_map={:?}", funding_map);
 
         let positions = account
             .positions

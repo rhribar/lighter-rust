@@ -164,8 +164,6 @@ impl Fetcher for FetcherHyperliquid {
 
         let response = self.client.post("/info", &payload.to_string(), None).await?;
         let response_body = response.text().await?;
-        info!("Response body: {}", response_body);
-
         let account_data: HyperliquidAccountData = serde_json::from_str(&response_body)?;
 
         let account_value = parse_decimal(&account_data.margin_summary.account_value)?;

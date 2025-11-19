@@ -255,24 +255,6 @@ pub fn sign_limit_ioc(
     let domain_chain_id_val = domain_chain_id.clone().unwrap_or_else(|| "SN_MAIN".to_string());
     let domain_revision_val = domain_revision.clone().unwrap_or_else(|| "1".to_string());
 
-    info!(
-        "[DEBUG] get_order_hash args:\n  position_id: {}\n  base_asset_id_hex: {}\n  base_amount: {}\n  quote_asset_id_hex: {}\n  quote_amount: {}\n  fee_asset_id_hex: {}\n  fee_amount: {}\n  expiry: {}\n  nonce_str: {}\n  user_public_key_hex: {}\n  domain_name: {}\n  domain_version: {}\n  domain_chain_id: {}\n  domain_revision: {}",
-        position_id,
-        base_asset_id_hex,
-        base_amount,
-        quote_asset_id_hex,
-        quote_amount,
-        fee_asset_id_hex,
-        fee_amount,
-        expiry,
-        nonce_str,
-        user_public_key_hex,
-        domain_name_val,
-        domain_version_val,
-        domain_chain_id_val,
-        domain_revision_val
-    );
-
     let hash = get_order_hash(
         position_id,
         base_asset_id_hex,
@@ -291,7 +273,7 @@ pub fn sign_limit_ioc(
     )
     .map_err(|e| anyhow!("order hash error: {e}"))?;
 
-    info!("[DEBUG] Generated order hash: {:x}", hash);
+    info!("[DEBUG] Generated order hash: hash={:x}", hash);
     // ───── signature ─────
     let sig = sign_message(&hash, &stark_priv).map_err(|e| anyhow!("sign failed: {e}"))?;
     info!("[DEBUG] Generated signature: r={:x}, s={:x}", sig.r, sig.s);
