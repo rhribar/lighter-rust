@@ -53,3 +53,7 @@ path = "examples/transfer_update_leverage.rs"
 name = "send_tx_batch"
 path = "examples/send_tx_batch.rs"
 
+[[example]]
+name = "close_all_positions"
+path = "examples/close_all_positions.rs"
+

@@ -444,6 +444,216 @@ impl LighterClient {
         Ok(response_json)
     }
 
+    /// Close a position in a specific market
+    /// 
+    /// Creates a market order with reduce_only=true to close the position.
+    /// Use this to close a position when you know the market and direction.
+    /// 
+    /// # Arguments
+    /// * `market_index` - Market index (0-based)
+    /// * `is_ask` - true to close long position (sell), false to close short position (buy)
+    /// 
+    /// # Returns
+    /// JSON response from the API
+    pub async fn close_position(&self, market_index: u8, is_ask: bool) -> Result<Value> {
+        let order = CreateOrderRequest {
+            account_index: self.account_index,
+            order_book_index: market_index,
+            client_order_index: SystemTime::now()
+                .duration_since(UNIX_EPOCH)?
+                .as_millis() as u64,
+            base_amount: i64::MAX / 2, // Large amount to ensure position is closed
+            price: 0, // Market order
+            is_ask,
+            order_type: 1, // Market order
+            time_in_force: 0, // ImmediateOrCancel
+            reduce_only: true, // Only reduce position
+            trigger_price: 0,
+        };
+        
+        self.create_order(order).await
+    }
+    
+    /// Get account information including positions
+    /// 
+    /// # Returns
+    /// JSON response with account details including positions
+    pub async fn get_account(&self) -> Result<Value> {
+        let auth_token = self.create_auth_token(600)?; // 10 minute expiry
+        let account_index_str = self.account_index.to_string();
+        
+        let response = self
+            .client
+            .get(&format!("{}/api/v1/account", self.base_url))
+            .query(&[("by", "index"), ("value", &account_index_str)])
+            .header("Authorization", &auth_token)
+            .header("Auth", &auth_token)
+            .send()
+            .await?;
+        
+        let response_text = response.text().await?;
+        let response_json: Value = serde_json::from_str(&response_text)?;
+        
+        Ok(response_json)
+    }
+    
+    /// Close all positions by querying account first
+    /// 
+    /// This method queries the account to find open positions, then closes them.
+    /// More efficient than close_all_positions() as it only closes positions that exist.
+    /// 
+    /// # Returns
+    /// JSON response with results for each closed position
+    pub async fn close_all_positions_auto(&self) -> Result<Value> {
+        // First, get account info to see what positions exist
+        let account_info = self.get_account().await?;
+        
+        // Account API returns: { "accounts": [...], "code": 200, "total": 1 }
+        // Extract the first account from the accounts array
+        let account_data = if let Some(accounts_array) = account_info.get("accounts").and_then(|a| a.as_array()) {
+            // Get first account from accounts array
+            accounts_array.first()
+        } else if account_info.is_array() {
+            // Fallback: if root is array, get first element
+            account_info.as_array().and_then(|a| a.first())
+        } else {
+            // Single account object
+            Some(&account_info)
+        };
+        
+        // Extract positions from the account
+        let empty_vec: Vec<Value> = Vec::new();
+        let positions = account_data
+            .and_then(|acc| acc.get("positions"))
+            .or_else(|| account_data.and_then(|acc| acc.get("Positions")))
+            .and_then(|p| p.as_array())
+            .unwrap_or(&empty_vec);
+        
+        let mut results = Vec::new();
+        
+        for position in positions {
+            // API uses "market_id" (snake_case), not "market_index"
+            let market_index = position.get("market_id")
+                .or_else(|| position.get("marketIndex"))
+                .or_else(|| position.get("market_index"))
+                .or_else(|| position.get("marketId"))
+                .and_then(|m| m.as_u64().or_else(|| m.as_i64().map(|v| v as u64)))
+                .map(|v| v as u8);
+            
+            if let Some(market_index) = market_index {
+                // Get position sign: 1 = Long, -1 = Short
+                let sign = position.get("sign")
+                    .or_else(|| position.get("Sign"))
+                    .and_then(|s| s.as_i64())
+                    .unwrap_or(0);
+                
+                // Get position amount - try multiple formats (string or number)
+                let position_amount = position.get("position")
+                    .or_else(|| position.get("Position"))
+                    .and_then(|p| {
+                        if let Some(s) = p.as_str() {
+                            s.parse::<f64>().ok()
+                        } else {
+                            p.as_f64().or_else(|| p.as_i64().map(|v| v as f64))
+                        }
+                    })
+                    .unwrap_or(0.0);
+                
+                // Only close if position exists (non-zero)
+                if position_amount.abs() > 0.0001 {
+                    // sign = 1 means long position, close by selling (is_ask = true)
+                    // sign = -1 means short position, close by buying (is_ask = false)
+                    let is_ask = sign > 0;
+                    
+                    match self.close_position(market_index, is_ask).await {
+                        Ok(response) => {
+                            let code = response["code"].as_i64().unwrap_or_default();
+                            results.push(json!({
+                                "market_index": market_index,
+                                "direction": if sign > 0 { "long" } else { "short" },
+                                "position_amount": position_amount,
+                                "status": if code == 200 { "success" } else { "failed" },
+                                "code": code,
+                                "response": response
+                            }));
+                        }
+                        Err(e) => {
+                            results.push(json!({
+                                "market_index": market_index,
+                                "direction": if sign > 0 { "long" } else { "short" },
+                                "position_amount": position_amount,
+                                "status": "error",
+                                "error": e.to_string()
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(json!({
+            "code": 200,
+            "message": "Close all positions completed",
+            "positions_found": positions.len(),
+            "positions_closed": results.len(),
+            "results": results
+        }))
+    }
+    
+    /// Close all positions in specified markets
+    /// 
+    /// Attempts to close positions by creating market orders with reduce_only=true
+    /// for both directions (buy and sell) in each market. Only the order matching
+    /// the position direction will execute.
+    /// 
+    /// Note: This method doesn't check if positions exist first. For better efficiency,
+    /// use close_all_positions_auto() which queries positions first.
+    /// 
+    /// # Arguments
+    /// * `market_indices` - Vector of market indices where positions should be closed
+    /// 
+    /// # Returns
+    /// JSON response with results for each market
+    pub async fn close_all_positions(&self, market_indices: Vec<u8>) -> Result<Value> {
+        let mut results = Vec::new();
+        
+        for market_index in market_indices {
+            // Try closing long position (sell)
+            let close_long = self.close_position(market_index, true).await;
+            if let Ok(response) = &close_long {
+                let code = response["code"].as_i64().unwrap_or_default();
+                if code == 200 {
+                    results.push(json!({
+                        "market_index": market_index,
+                        "direction": "long",
+                        "status": "success",
+                        "response": response
+                    }));
+                }
+            }
+            
+            // Try closing short position (buy)
+            let close_short = self.close_position(market_index, false).await;
+            if let Ok(response) = &close_short {
+                let code = response["code"].as_i64().unwrap_or_default();
+                if code == 200 {
+                    results.push(json!({
+                        "market_index": market_index,
+                        "direction": "short",
+                        "status": "success",
+                        "response": response
+                    }));
+                }
+            }
+        }
+        
+        Ok(json!({
+            "code": 200,
+            "message": "Close all positions completed",
+            "results": results
+        }))
+    }
+
     pub async fn change_api_key(&self, new_public_key: &[u8; 40]) -> Result<Value> {
         let nonce = self.get_next_nonce_from_cache().await?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
