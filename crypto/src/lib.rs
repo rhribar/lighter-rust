@@ -63,7 +63,7 @@ pub use scalar_field::ScalarField;
 pub use poseidon_hash::{Goldilocks, Fp5Element};
 
 // Re-export Schnorr functions
-pub use schnorr::{sign_with_nonce, verify_signature, Point};
+pub use schnorr::{sign_with_nonce, verify_signature, validate_public_key, Point};
 
 use thiserror::Error;
 
@@ -82,6 +82,9 @@ pub enum CryptoError {
     /// The message has an invalid length.
     #[error("Invalid message length: expected 40 bytes, got {0}")]
     InvalidMessageLength(usize),
+    /// The public key is invalid or cannot be decoded.
+    #[error("Invalid public key: cannot decode as encoded point")]
+    InvalidPublicKey,
     /// Hex decoding failed.
     #[error("Hex decode error: {0}")]
     HexDecode(#[from] hex::FromHexError),

@@ -18,14 +18,6 @@ dotenv = "0.15"
 rand = "0.8"
 
 [[example]]
-name = "simple_test"
-path = "examples/simple_test.rs"
-
-[[example]]
-name = "verify_fixes"
-path = "examples/verify_fixes.rs"
-
-[[example]]
 name = "create_market_order"
 path = "examples/create_market_order.rs"
 
@@ -50,14 +42,14 @@ name = "setup_api_key"
 path = "examples/setup_api_key.rs"
 
 [[example]]
-name = "benchmark_real_transactions"
-path = "examples/benchmark_real_transactions.rs"
+name = "create_sl_tp"
+path = "examples/create_sl_tp.rs"
 
 [[example]]
-name = "benchmark"
-path = "examples/benchmark.rs"
+name = "transfer_update_leverage"
+path = "examples/transfer_update_leverage.rs"
 
 [[example]]
-name = "send_orders_10x"
-path = "examples/send_orders_10x.rs"
+name = "send_tx_batch"
+path = "examples/send_tx_batch.rs"
 

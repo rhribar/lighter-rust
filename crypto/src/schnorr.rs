@@ -357,10 +357,125 @@ impl Point {
         Point::new(x_new, z_new, u_new, t_new)
     }
     
+    /// Combined scalar multiplication: computes scalarA * a + scalarB * b efficiently.
+    ///
+    /// This is equivalent to a.mul(&scalarA).add(&b.mul(&scalarB)) but more efficient.
+    /// Used for verification: R = s * G + e * P
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use crypto::{Point, ScalarField};
+    ///
+    /// let generator = Point::generator();
+    /// let public_key = generator.mul(&some_scalar);
+    /// let s = ScalarField::sample_crypto();
+    /// let e = ScalarField::sample_crypto();
+    /// let result = Point::mul_add2(&generator, &public_key, &s, &e);
+    /// ```
+    pub fn mul_add2(a: &Point, b: &Point, scalar_a: &ScalarField, scalar_b: &ScalarField) -> Point {
+        // Use 4-bit window for efficiency (matches Go implementation)
+        // Go's PrecomputeWindow creates: multiples[0]=neutral, multiples[1]=p, multiples[2]=2*p, etc.
+        // We need to create a similar structure
+        const WINDOW_SIZE: usize = 16; // 2^4
+        
+        // Create windows matching Go's structure: win[0]=neutral, win[1]=self, win[2]=2*self, etc.
+        // Helper to convert point to affine
+        let to_affine_single = |p: &Point| -> AffinePoint {
+            let m1 = p.z.mul(&p.t).inverse();
+            AffinePoint {
+                x: p.x.mul(&p.t).mul(&m1),
+                u: p.u.mul(&p.z).mul(&m1),
+            }
+        };
+        
+        let mut a_window = vec![AffinePoint::neutral(); WINDOW_SIZE];
+        a_window[1] = to_affine_single(a);
+        a_window[2] = to_affine_single(&a.double());
+        for i in 3..WINDOW_SIZE {
+            let prev = a_window[i-1].to_point();
+            a_window[i] = to_affine_single(&prev.add(a));
+        }
+        
+        let mut b_window = vec![AffinePoint::neutral(); WINDOW_SIZE];
+        b_window[1] = to_affine_single(b);
+        b_window[2] = to_affine_single(&b.double());
+        for i in 3..WINDOW_SIZE {
+            let prev = b_window[i-1].to_point();
+            b_window[i] = to_affine_single(&prev.add(b));
+        }
+        
+        // Split scalars into 4-bit limbs
+        let a_limbs = scalar_a.split_to_4bit_limbs();
+        let b_limbs = scalar_b.split_to_4bit_limbs();
+        
+        let num_limbs = a_limbs.len();
+        
+        // Start with the last limb (most significant)
+        // res = aWindow[last] + bWindow[last] (add the two affine points first)
+        // Note: our window is 0-indexed where win[0] = self, win[1] = 2*self, etc.
+        // But 4-bit limbs are values 0-15, where 0=0*self, 1=1*self, etc.
+        // So we need to add 1 to convert: limb value 5 -> win[4] (5*self) -> lookup(5+1=6) -> win[5]
+        // Actually, wait: win[0]=1*self, so limb 1 -> win[0] -> lookup(1) -> win[0] ✓
+        // But limb 0 should be neutral, not win[0]
+        // Let me check: Go window has multiples[0]=neutral, multiples[1]=self
+        // So limb 0 -> multiples[0] (neutral)
+        //    limb 1 -> multiples[1] (self)  
+        //    limb 5 -> multiples[5] (5*self)
+        // Our window has win[0]=self, win[1]=2*self
+        // So limb 1 -> win[0] (self) -> lookup(1) -> win[0] ✓
+        //    limb 5 -> win[4] (5*self) -> lookup(5) -> win[4] ✓
+        //    limb 0 -> neutral -> lookup(0) -> neutral ✓
+        // Go uses aWindow[limb_value] directly, where window[0]=neutral, window[1]=self
+        // So limb value 0 -> window[0] (neutral)
+        //    limb value 5 -> window[5] (5*self)
+        // Our lookup_var_time expects k where k=0 -> neutral, k>0 -> win[k-1]
+        // So limb 0 -> lookup(0) -> neutral ✓
+        //    limb 5 -> lookup(6) -> win[5] ✓
+        // Actually wait: Go's window[0]=neutral, window[1]=self, so
+        // limb 0 -> window[0] (neutral) -> lookup(0) ✓
+        // limb 5 -> window[5] (5*self) -> lookup(6) -> win[5] ✓
+        // But our window structure matches now! So we can use limbs directly as array indices
+        let a_idx = a_limbs[num_limbs - 1] as usize;
+        let b_idx = b_limbs[num_limbs - 1] as usize;
+        
+        // Add the two affine points: window[a_idx] + window[b_idx]
+        let a_lookup = a_window[a_idx];
+        let b_lookup = b_window[b_idx];
+        
+        // Add the two affine points: convert first to point, then add second as affine
+        let mut result = a_lookup.to_point();
+        result = result.add_affine(&b_lookup);
+        
+        // Process remaining limbs from right to left (most significant to least)
+        for i in (0..num_limbs - 1).rev() {
+            // Double 4 times (since each limb is 4 bits)
+            result = result.set_m_double(4);
+            
+            // Add corresponding window entries
+            // res = res.Add(aWindow[i].Add(bWindow[i]))
+            let a_idx = a_limbs[i] as usize;
+            let b_idx = b_limbs[i] as usize;
+            
+            let a_lookup = a_window[a_idx];
+            let b_lookup = b_window[b_idx];
+            
+            // Add the two affine lookups first, then add to result
+            let a_pt = a_lookup.to_point();
+            let combined = a_pt.add_affine(&b_lookup);
+            result = result.add(&combined);
+        }
+        
+        result
+    }
+    
     /// Multiplies this point by a scalar (scalar multiplication).
     ///
     /// This is the core operation for key generation and signature verification.
     /// Uses windowed scalar multiplication for efficiency.
+    ///
+    /// Note: The scalar should be in canonical form. If you have a scalar in Montgomery
+    /// form (e.g., from `mul()`), convert it to canonical first using `monty_mul(&ScalarField::ONE)`.
     ///
     /// # Example
     ///
@@ -390,6 +505,8 @@ impl Point {
         let win = self.make_window_affine();
         
         // Recode scalar into signed digits
+        // Note: recode_signed interprets raw limbs, so it expects canonical form
+        // Scalars from bytes are canonical, but scalars from mul() are Montgomery
         let digits = scalar.recode_signed(WINDOW);
         
         // Start with the last digit (least significant)
@@ -637,34 +754,136 @@ impl Point {
     
     /// Decodes an Fp5Element back to a Point.
     ///
-    /// This is a simplified decoding that reconstructs a point from its encoded form.
-    /// Note: This is not a complete inverse of `encode()` - it creates a valid point
-    /// representation but may not recover the exact original point.
+    /// This implements the proper decoding algorithm from Go's Decode() function.
+    /// Curve equation: y^2 = x*(x^2 + a*x + b); encoded value is w = y/x.
+    /// Solving: x^2 - (w^2 - a)*x + b = 0
     ///
     /// # Arguments
     /// * `encoded` - The encoded Fp5Element (typically from `encode()`)
     ///
     /// # Returns
-    /// A Point reconstructed from the encoded value.
-    pub fn decode(encoded: &Fp5Element) -> Self {
+    /// `Some(Point)` if decoding succeeds, `None` if the encoded value is invalid.
+    pub fn decode(encoded: &Fp5Element) -> Option<Self> {
+        use poseidon_hash::Fp5Element as Fp5;
+        
+        // If w == 0, return neutral point
         if encoded.is_zero() {
-            // Neutral point
-            Self::neutral()
+            return Some(Self::neutral());
+        }
+        
+        // Step 1: Compute e = w^2 - a
+        let w_squared = encoded.square();
+        let e = w_squared.sub(&A_ECG_FP5_POINT);
+        
+        // Step 2: Compute delta = e^2 - 4*b
+        let e_squared = e.square();
+        let delta = e_squared.sub(&B_MUL4_ECG_FP5_POINT);
+        
+        // Step 3: Compute canonical square root of delta
+        let (r, success) = delta.canonical_sqrt();
+        let r = if success { r } else { Fp5::zero() };
+        
+        // Step 4: Solve quadratic: x1 = (e + r) / 2, x2 = (e - r) / 2
+        // Division by 2: multiply by inverse of 2
+        let fp5_two = Fp5::from_uint64_array([2, 0, 0, 0, 0]);
+        let two_inv = fp5_two.inverse();
+        let x1 = e.add(&r).mul(&two_inv);
+        let x2 = e.sub(&r).mul(&two_inv);
+        
+        // Step 5: Choose x based on Legendre symbol
+        // We want the solution that is NOT a square
+        // If x1 is a square (Legendre == 1), use x2; otherwise use x1
+        let x1_legendre = x1.legendre();
+        let one_goldi = Goldilocks::one();
+        let mut x = x1;
+        if x1_legendre.equals(&one_goldi) {
+            // x1 is a square, so use x2 (which is not a square)
+            x = x2;
+        }
+        // else: x1 is not a square, so use x1 (already set)
+        
+        // Step 6: Set coordinates based on success
+        let final_x = if success { x } else { Fp5::zero() };
+        let z = Fp5::one();
+        let u = if success { Fp5::one() } else { Fp5::zero() };
+        let t = if success { *encoded } else { Fp5::one() };
+        
+        // Step 7: Return point if decoding succeeded
+        if success || encoded.is_zero() {
+            Some(Point {
+                x: final_x,
+                z,
+                u,
+                t,
+            })
         } else {
-            // For non-zero encoded values, create a point where:
-            // u = 1, t = encoded (so that t * u^-1 = encoded)
-            Self {
-                x: *encoded,
-                z: Fp5Element::one(),
-                u: Fp5Element::one(),
-                t: *encoded,
-            }
+            None
         }
     }
+    
     
     pub fn is_neutral(&self) -> bool {
         self.u.is_zero()
     }
+}
+
+/// Helper function to convert message bytes to Fp5Element consistently.
+/// This ensures the same conversion is used in both signing and verification.
+///
+/// Matches Go's FromCanonicalLittleEndianBytes behavior:
+/// - Message is 40 bytes (5 * 8 bytes)
+/// - Each 8-byte chunk is interpreted as little-endian u64
+/// - Converted to Goldilocks field elements and assembled into Fp5Element
+fn message_to_fp5(message: &[u8]) -> Result<Fp5Element> {
+    if message.len() != 40 {
+        return Err(CryptoError::InvalidMessageLength(message.len()));
+    }
+    
+    let mut message_elements = [Goldilocks::zero(); 5];
+    for (i, chunk) in message.chunks(8).enumerate().take(5) {
+        let mut bytes = [0u8; 8];
+        bytes[..chunk.len()].copy_from_slice(chunk);
+        message_elements[i] = Goldilocks::from_canonical_u64(u64::from_le_bytes(bytes));
+    }
+    Ok(Fp5Element(message_elements))
+}
+
+/// Validates that a public key is a valid encoded point.
+///
+/// This function checks if the public key bytes can be decoded as a valid point
+/// on the elliptic curve. Returns `Ok(())` if valid, `Err` otherwise.
+///
+/// # Arguments
+/// * `public_key` - 40-byte public key to validate
+///
+/// # Returns
+/// `Ok(())` if the public key is valid, `Err(CryptoError::InvalidPublicKey)` otherwise
+///
+/// # Example
+///
+/// ```rust
+/// use goldilocks_crypto::{ScalarField, Point, validate_public_key};
+///
+/// let private_key = ScalarField::sample_crypto();
+/// let public_key = Point::generator().mul(&private_key);
+/// let public_key_bytes = public_key.encode().to_bytes_le();
+///
+/// // Validate the public key
+/// validate_public_key(&public_key_bytes).unwrap();
+/// ```
+pub fn validate_public_key(public_key: &[u8]) -> Result<()> {
+    if public_key.len() != 40 {
+        return Err(CryptoError::InvalidPrivateKeyLength(public_key.len()));
+    }
+    
+    let public_key_fp5 = Fp5Element::from_bytes_le(public_key)
+        .map_err(|_| CryptoError::InvalidPrivateKeyLength(public_key.len()))?;
+    
+    // Try to decode as a point - if this fails, the public key is invalid
+    Point::decode(&public_key_fp5)
+        .ok_or(CryptoError::InvalidPublicKey)?;
+    
+    Ok(())
 }
 
 /// Signs a message using Schnorr signature scheme with a given nonce.
@@ -703,13 +922,8 @@ pub fn sign_with_nonce(private_key: &[u8], message: &[u8], nonce_bytes: &[u8]) -
         .map_err(|_| CryptoError::InvalidPrivateKeyLength(nonce_bytes.len()))?;
     
     // Convert message to Fp5Element (quintic extension field element)
-    let mut message_elements = [Goldilocks::zero(); 5];
-    for (i, chunk) in message.chunks(8).enumerate().take(5) {
-        let mut bytes = [0u8; 8];
-        bytes[..chunk.len()].copy_from_slice(chunk);
-        message_elements[i] = Goldilocks::from_canonical_u64(u64::from_le_bytes(bytes));
-    }
-    let message_fp5 = Fp5Element(message_elements);
+    // Use helper function to ensure consistency with verification
+    let message_fp5 = message_to_fp5(message)?;
     
     // Step 1: Compute R = nonce * generator_point
     let generator = Point::generator();
@@ -727,6 +941,7 @@ pub fn sign_with_nonce(private_key: &[u8], message: &[u8], nonce_bytes: &[u8]) -
     let e_scalar = ScalarField::from_fp5_element(&e_fp5);
     
     // Step 3: Compute response s = nonce - e * private_key
+    // Note: mul() returns canonical form (Go keeps limbs in normal representation)
     let e_times_private = e_scalar.mul(&private_scalar);
     let s = nonce_scalar.sub(e_times_private);
     
@@ -797,22 +1012,48 @@ pub fn verify_signature(signature: &[u8], message: &[u8], public_key: &[u8]) -> 
         .map_err(|_| CryptoError::InvalidSignatureLength(signature.len()))?;
 
     // Convert message to Fp5Element
-    let mut message_elements = [Goldilocks::zero(); 5];
-    for (i, chunk) in message.chunks(8).enumerate().take(5) {
-        let mut bytes = [0u8; 8];
-        bytes[..chunk.len()].copy_from_slice(chunk);
-        message_elements[i] = Goldilocks::from_canonical_u64(u64::from_le_bytes(bytes));
-    }
-    let message_fp5 = Fp5Element(message_elements);
+    // Use helper function to ensure consistency with signing
+    let message_fp5 = message_to_fp5(message)?;
 
-    // For now, treat public_key as private key and compute public point
-    // This is a temporary fix until we implement proper point decoding
-    let private_scalar = ScalarField::from_bytes_le(public_key)
+    // Decode public key as Fp5Element (encoded point) and then decode to Point
+    // Public keys must be valid encoded points - no fallback to private key treatment
+    let public_key_fp5 = Fp5Element::from_bytes_le(public_key)
         .map_err(|_| CryptoError::InvalidPrivateKeyLength(public_key.len()))?;
-    let generator = Point::generator();
-    let public_point = generator.mul(&private_scalar);
+    
+    // Try to decode the Fp5Element as a Point
+    // If decoding fails, return error instead of silently using wrong point
+    let public_point = Point::decode(&public_key_fp5)
+        .ok_or_else(|| {
+            // Enhanced error context for debugging
+            #[cfg(debug_assertions)]
+            {
+                use std::println;
+                println!("DEBUG: Public key decoding failed");
+                println!("  public_key bytes: {:?}", public_key);
+                println!("  public_key_fp5: {:?}", public_key_fp5.to_bytes_le());
+                
+                // Check if it's zero (neutral point)
+                if public_key_fp5.is_zero() {
+                    println!("  Note: Public key is zero (neutral point)");
+                } else {
+                    // Debug the decoding process
+                    let w_squared = public_key_fp5.square();
+                    let e = w_squared.sub(&A_ECG_FP5_POINT);
+                    let e_squared = e.square();
+                    let delta = e_squared.sub(&B_MUL4_ECG_FP5_POINT);
+                    let (_r, success) = delta.canonical_sqrt();
+                    println!("  delta canonical_sqrt success: {}", success);
+                    if !success {
+                        println!("  delta: {:?}", delta.to_bytes_le());
+                    }
+                }
+            }
+            CryptoError::InvalidPublicKey
+        })?;
 
-    // Compute R = s * G + e * public_key (combined scalar multiplication)
+    // Compute R = s * G + e * public_key
+    // Using separate multiplications and addition (this should work correctly)
+    let generator = Point::generator();
     let s_g = generator.mul(&s);
     let e_public = public_point.mul(&e);
     let r_point = s_g.add(&e_public);
@@ -831,7 +1072,24 @@ pub fn verify_signature(signature: &[u8], message: &[u8], public_key: &[u8]) -> 
     let e_prime_scalar = ScalarField::from_fp5_element(&e_prime_fp5);
 
     // Verify e == e'
-    Ok(e.equals(&e_prime_scalar))
+    let is_valid = e.equals(&e_prime_scalar);
+    
+    // Debug logging for failures
+    #[cfg(debug_assertions)]
+    if !is_valid {
+        use std::println;
+        println!("\n=== VERIFICATION FAILURE DEBUG ===");
+        println!("  e bytes (from signature): {:?}", e.to_bytes_le());
+        println!("  e_prime bytes (computed): {:?}", e_prime_scalar.to_bytes_le());
+        println!("  r_encoded (computed R): {:?}", r_encoded.to_bytes_le());
+        println!("  message_fp5: {:?}", message_fp5.to_bytes_le());
+        println!("  public_point encoded: {:?}", public_point.encode().to_bytes_le());
+        println!("  s bytes: {:?}", s.to_bytes_le());
+        println!("  R = s*G + e*P encoded: {:?}", r_encoded.to_bytes_le());
+        println!("===============================\n");
+    }
+    
+    Ok(is_valid)
 }
 
 // Helper functions
