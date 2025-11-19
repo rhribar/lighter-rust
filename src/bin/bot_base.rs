@@ -13,7 +13,10 @@ use tokio::{
 };
 
 use points_bot_rs::{
-    BotEnvConfig, BotJsonConfig, BotMode, ExchangeName, PointsBotResult, PositionSide, config, fetchers::{AccountData, Fetcher, MarketInfo, Position, write_last_change}, operators::{Operator, OrderRequest, OrderResponse, OrderType}
+    config,
+    fetchers::{write_last_change, AccountData, Fetcher, MarketInfo, Position},
+    operators::{Operator, OrderRequest, OrderResponse, OrderType},
+    BotEnvConfig, BotJsonConfig, BotMode, ExchangeName, PointsBotResult, PositionSide,
 };
 use rust_decimal::RoundingStrategy;
 
@@ -141,17 +144,20 @@ async fn trade(
             positions_b.first().map(|p| &p.symbol)
         };
 
-        let position_a = positions_a.iter().find(|p| p.symbol == *current_symbol.unwrap())
+        let position_a = positions_a
+            .iter()
+            .find(|p| p.symbol == *current_symbol.unwrap())
             .expect("Could not find position_a for symbol");
-        let position_b = positions_b.iter().find(|p| p.symbol == *current_symbol.unwrap())
+        let position_b = positions_b
+            .iter()
+            .find(|p| p.symbol == *current_symbol.unwrap())
             .expect("Could not find position_b for symbol");
 
-        let (position_long, position_short, markets_long, markets_short) =
-            if position_a.side == PositionSide::Long {
-                (position_a, position_b, &markets_a, &markets_b)
-            } else {
-                (position_b, position_a, &markets_b, &markets_a)
-            };
+        let (position_long, position_short, markets_long, markets_short) = if position_a.side == PositionSide::Long {
+            (position_a, position_b, &markets_a, &markets_b)
+        } else {
+            (position_b, position_a, &markets_b, &markets_a)
+        };
 
         // smth wrong kill all, circuit out
         if positions_a.len() != 1 || positions_b.len() != 1 {
@@ -169,12 +175,17 @@ async fn trade(
             return;
         }
 
-        let long_market = get_market_for_position(position_long, &markets_long).unwrap();
-        let short_market = get_market_for_position(position_short, &markets_short).unwrap();
+        let long_market =
+            get_market_for_position(position_long, &markets_long).expect("Could not find market for position_long");
+        let short_market =
+            get_market_for_position(position_short, &markets_short).expect("Could not find market for position_short");
 
         let arbitrage_opportunities = calculate_arbitrage_opportunities(&markets_a, &markets_b, config).await;
 
-        let current_op_data = arbitrage_opportunities.iter().find(|op| &op.symbol == current_symbol.unwrap()).unwrap();
+        let current_op_data = arbitrage_opportunities
+            .iter()
+            .find(|op| &op.symbol == current_symbol.unwrap())
+            .unwrap();
         let current_funding_diff_ann = if long_market.exchange == current_op_data.long_market.exchange {
             current_op_data.funding_diff * Decimal::from(24 * 365 * 100)
         } else {
@@ -201,7 +212,10 @@ async fn trade(
 
         let pnl_cum = calc_pnl(exit_arb, position_long, position_short).await;
 
-        let leverage = current_op_data.long_market.leverage.min(current_op_data.short_market.leverage);
+        let leverage = current_op_data
+            .long_market
+            .leverage
+            .min(current_op_data.short_market.leverage);
 
         let long_exit_px = exit_arb.long_exit_px;
         let short_exit_px = exit_arb.short_exit_px;
@@ -213,18 +227,29 @@ async fn trade(
 
         info!("Leverage: {}", leverage);
 
-        let percent_exposure_long = ((long_exit_px / position_long.entry_price) - Decimal::ONE) * leverage * Decimal::from(100); // in percent
-        let percent_exposure_short = (Decimal::ONE - (short_exit_px / position_short.entry_price)) * leverage * Decimal::from(100);
+        let percent_exposure_long =
+            ((long_exit_px / position_long.entry_price) - Decimal::ONE) * leverage * Decimal::from(100); // in percent
+        let percent_exposure_short =
+            (Decimal::ONE - (short_exit_px / position_short.entry_price)) * leverage * Decimal::from(100);
 
         let percent_exposure = percent_exposure_long.max(percent_exposure_short);
 
-        info!("Long entry price: {} | Current long exit px: {} | Percent exposure long: {}", position_long.entry_price, long_exit_px, percent_exposure_long);
-        info!("Short entry price: {} | Current short exit px: {} | Percent exposure short: {}", position_short.entry_price, short_exit_px, percent_exposure_short);
+        info!(
+            "Long entry price: {} | Current long exit px: {} | Percent exposure long: {}",
+            position_long.entry_price, long_exit_px, percent_exposure_long
+        );
+        info!(
+            "Short entry price: {} | Current short exit px: {} | Percent exposure short: {}",
+            position_short.entry_price, short_exit_px, percent_exposure_short
+        );
 
         info!("Overall percent exposure to liquidation: {}%", percent_exposure);
 
         if percent_exposure > Decimal::from(49) {
-            info!("EXIT CHECK: Position is too close to liquidation: {}%, change position", percent_exposure);
+            info!(
+                "EXIT CHECK: Position is too close to liquidation: {}%, change position",
+                percent_exposure
+            );
             change_position = true;
         } else if exit_arb.exit_arb_valid_after_fees {
             info!("EXIT CHECK: Our exit is profitable after fees, change position");
@@ -256,7 +281,7 @@ async fn trade(
         );
 
         if change_position {
-            exit(
+            /* exit(
                 position_long,
                 position_short,
                 &exit_arb,
@@ -265,7 +290,7 @@ async fn trade(
                 &operator_map,
                 &current_symbol.cloned(),
             )
-            .await;
+            .await; */
 
             let sleep_time = if env_config.mode == BotMode::Production {
                 5 * 60
@@ -283,24 +308,19 @@ async fn trade(
         }
     }
 
-    if !has_positions_open || change_position {
+    /* if !has_positions_open || change_position {
         enter(config, fetcher_a, fetcher_b, &operator_map).await
-    }
+    } */
 }
 
-async fn calc_pnl(
-    exit_arb: &ExitArbitrage,
-    position_long: &Position,
-    position_short: &Position,
-) -> Decimal {
+async fn calc_pnl(exit_arb: &ExitArbitrage, position_long: &Position, position_short: &Position) -> Decimal {
     // when we exit a short we buy, so we would rather buy lower, so when we come here, we know that price is not good, and we know this will be negative, thats why buy is first (or short exit)
     // this includes spread and taker fees here
 
     // check cum funding, call for each exchange
     // check unrealized pnl for each position
 
-    let spread_percent = (exit_arb.short_exit_px_wfees - exit_arb.long_exit_px_wfees)
-        / exit_arb.short_exit_px_wfees
+    let spread_percent = (exit_arb.short_exit_px_wfees - exit_arb.long_exit_px_wfees) / exit_arb.short_exit_px_wfees
         * Decimal::from(100);
 
     info!("Exit Spread Percent: {}", spread_percent);
@@ -475,7 +495,10 @@ async fn enter(
             (long_entry_px - short_entry_px) / short_entry_px * Decimal::from(100)
         );
 
-        info!("Estimated funding diff ann: {}%", op.funding_diff * Decimal::from(24 * 365 * 100));
+        info!(
+            "Estimated funding diff ann: {}%",
+            op.funding_diff * Decimal::from(24 * 365 * 100)
+        );
 
         match create_order(
             *long_operator,
@@ -542,7 +565,11 @@ async fn get_trading_data(
 
 async fn get_account_data(fetcher: &dyn Fetcher) -> Option<AccountData> {
     fetcher.get_account_data().await.map(Some).unwrap_or_else(|e| {
-        error!("Failed to get A account: {:?}", e);
+        error!(
+            "Failed to get account data for {}: {:?}",
+            fetcher.get_exchange_info(),
+            e
+        );
         None
     })
 }
