@@ -105,14 +105,25 @@ impl ScalarField {
         let mut c = 0u64;
         
         for i in 0..5 {
-            // Subtract with borrow: first subtract a[i] from self.0[i]
+            // Go: z := U128From64(s[i]).Sub64(a[i]).Sub64(c)
+            // Sub64 does: v.Lo, borrowed = bits.Sub64(u.Lo, n, 0)
+            //            v.Hi = u.Hi - borrowed
+            // Since U128From64 has Hi=0, v.Hi = 0 - borrowed = (0xFFFFFFFFFFFFFFFF if borrowed, else 0)
+            // Then c = z.Hi & 1
+            
+            // Simulate U128 subtraction
             let (diff1, borrow1) = self.0[i].overflowing_sub(a.0[i]);
-            // Then subtract c (previous borrow)
+            // z1.Hi = 0 - borrow1 = (if borrow1 then 0xFFFFFFFFFFFFFFFF else 0)
+            let z1_hi: u64 = if borrow1 { 0xFFFFFFFFFFFFFFFF } else { 0 };
+            
+            // Then subtract c (previous borrow) from diff1
             let (diff2, borrow2) = diff1.overflowing_sub(c);
+            // z2.Hi = z1.Hi - borrow2
+            let z2_hi: u64 = z1_hi.wrapping_sub(borrow2 as u64);
+            
             r[i] = diff2;
-            // The borrow is 1 if either subtraction borrowed
-            // Go: c = z.Hi & 1 where z.Hi is the borrow (0 or 0xFFFFFFFFFFFFFFFF)
-            c = if borrow1 || borrow2 { 1 } else { 0 };
+            // c = z2.Hi & 1
+            c = z2_hi & 1;
         }
         
         if c != 0 {
@@ -150,7 +161,18 @@ impl ScalarField {
     pub fn add(&self, rhs: ScalarField) -> ScalarField {
         let r0 = self.add_inner(rhs);
         let (r1, c) = r0.sub_inner(&Self::N);
-        Self::select(c, &r1, &r0)
+        // Go: Select(c, r1, &r0)
+        // Go's Select(c, a0, a1): if c==0 return a0, else return a1
+        // So Select(c, r1, &r0) means: if c==0 return r1, else return r0
+        // But we want: if c==0 (no borrow, r0 < N) return r0, else return r1
+        // So we need to swap arguments: Select(c, r0, r1) but that's backwards too...
+        // Actually: Go Select(c, a0, a1) when c=0 returns a0
+        // We call Select(c, r1, &r0), so when c=0 we get r1, when c!=0 we get r0
+        // We want: when c=0 (r0 < N) return r0, when c!=0 (r0 >= N) return r1
+        // So we need: Select(c, r1, &r0) which is backwards!
+        // Let's check: Select(0, r1, &r0) returns r1, but we want r0
+        // So we should call: Select(c, &r0, &r1)
+        Self::select(c, &r0, &r1)
     }
     
     /// Subtracts two scalars with modular reduction.
@@ -180,17 +202,32 @@ impl ScalarField {
             let mut cc2 = 0u64;
             
             for j in 0..5 {
-                let z = (self.0[j] as u128) * (m as u128) + (r[j] as u128) + (cc1 as u128);
+                // First compute: z = self[j] * m + r[j] + cc1
+                let z = (self.0[j] as u128)
+                    .wrapping_mul(m as u128)
+                    .wrapping_add(r[j] as u128)
+                    .wrapping_add(cc1 as u128);
                 cc1 = (z >> 64) as u64;
-                let z = (f as u128) * (Self::N.0[j] as u128) + (z as u64 as u128) + (cc2 as u128);
+                let z_lo = z as u64;
+                
+                // Then compute: z = f * N[j] + z_lo + cc2
+                let z = (f as u128)
+                    .wrapping_mul(Self::N.0[j] as u128)
+                    .wrapping_add(z_lo as u128)
+                    .wrapping_add(cc2 as u128);
                 cc2 = (z >> 64) as u64;
+                
+                // Store result: if j > 0, store in r[j-1], otherwise it goes into r[4] later
                 if j > 0 {
                     r[j-1] = z as u64;
                 }
+                // Note: when j == 0, the result is discarded (as in Go implementation)
             }
+            // Final carry goes into r[4]
             r[4] = cc1.wrapping_add(cc2);
         }
         
+        // Reduce modulo N
         let (r2, c) = ScalarField(r).sub_inner(&Self::N);
         Self::select(c, &r2, &ScalarField(r))
     }
@@ -216,6 +253,28 @@ impl ScalarField {
     /// More efficient than `self.mul(&self)`.
     pub fn square(&self) -> ScalarField {
         self.mul(self)
+    }
+    
+    /// Converts a scalar from Montgomery form to canonical form.
+    ///
+    /// This is needed because `mul()` returns Montgomery form, but operations
+    /// like `recode_signed()` and serialization expect canonical form.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use crypto::ScalarField;
+    ///
+    /// let a = ScalarField::from_bytes_le(&[1; 40]).unwrap();
+    /// let b = ScalarField::from_bytes_le(&[2; 40]).unwrap();
+    /// let product_montgomery = a.mul(&b); // Montgomery form
+    /// let product_canonical = product_montgomery.to_canonical(); // Canonical form
+    /// ```
+    pub fn to_canonical(&self) -> ScalarField {
+        // To convert from Montgomery to canonical: multiply by 1 using Montgomery multiplication
+        // If x_m = x * R2 mod n (Montgomery form), then x = x_m * 1 / R mod n
+        // Montgomery multiplication with 1 (canonical) gives: (x_m * 1) / R mod n = x mod n
+        self.monty_mul(&Self::ONE)
     }
     
     // Convert to little-endian bytes

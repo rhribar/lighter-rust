@@ -258,6 +258,135 @@ impl Goldilocks {
         // Field operations will reduce modulo MODULUS automatically
         Goldilocks(val as u64)
     }
+    
+    /// Computes the square root of this field element using Tonelli-Shanks algorithm.
+    ///
+    /// Returns `Some(sqrt)` if the square root exists, `None` otherwise.
+    ///
+    /// For Goldilocks field p = 2^64 - 2^32 + 1, implements full Tonelli-Shanks.
+    /// p - 1 = 2^32 * (2^32 - 1) = 2^32 * q where q = 0xFFFFFFFF is odd.
+    pub fn sqrt(&self) -> Option<Goldilocks> {
+        if self.is_zero() {
+            return Some(Goldilocks::zero());
+        }
+        
+        // Tonelli-Shanks algorithm for Goldilocks field
+        // p = 2^64 - 2^32 + 1 = 0xffffffff00000001
+        // p - 1 = 2^32 * (2^32 - 1) = 2^e * q
+        // where e = 32 and q = 2^32 - 1 = 0xFFFFFFFF (odd)
+        
+        const E: usize = 32;
+        const Q: u64 = 0xFFFFFFFFu64; // q = 2^32 - 1
+        
+        // Step 1: Find a quadratic non-residue z
+        // For Goldilocks, z = 11 is a known quadratic non-residue
+        let z = Goldilocks::from_canonical_u64(11);
+        
+        // Step 2: Initialize
+        // c = z^q mod p
+        let mut c = z.exp(Q);
+        
+        // t = self^q mod p
+        let mut t = self.exp(Q);
+        
+        // r = self^((q+1)/2) mod p
+        let mut r = self.exp((Q + 1) / 2);
+        
+        let mut m = E;
+        
+        // Step 3: Main loop
+        while t.to_canonical_u64() != 1 {
+            // Find smallest i such that t^(2^i) = 1
+            let mut i = 0;
+            let mut tt = t;
+            
+            while i < m && tt.to_canonical_u64() != 1 {
+                tt = tt.square();
+                i += 1;
+            }
+            
+            if i == m {
+                // No square root exists
+                return None;
+            }
+            
+            // b = c^(2^(m-i-1)) mod p
+            let mut b = c;
+            for _ in 0..(m - i - 1) {
+                b = b.square();
+            }
+            
+            // Update variables
+            // r = r * b mod p
+            r = r.mul(&b);
+            
+            // c = b^2 mod p
+            c = b.square();
+            
+            // t = t * c mod p
+            t = t.mul(&c);
+            
+            // m = i
+            m = i;
+        }
+        
+        // Verify that r^2 == self
+        let r_sq = r.square();
+        if r_sq.to_canonical_u64() == self.to_canonical_u64() {
+            Some(r)
+        } else {
+            None
+        }
+    }
+    
+    /// Raises this element to the power of 2^n by repeated squaring.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use poseidon_hash::Goldilocks;
+    ///
+    /// let a = Goldilocks::from_canonical_u64(5);
+    /// let result = a.exp_power_of_2(3); // a^(2^3) = a^8
+    /// ```
+    pub fn exp_power_of_2(&self, n: usize) -> Goldilocks {
+        let mut result = *self;
+        for _ in 0..n {
+            result = result.square();
+        }
+        result
+    }
+    
+    /// Checks if two Goldilocks elements are equal.
+    pub fn equals(&self, other: &Goldilocks) -> bool {
+        self.to_canonical_u64() == other.to_canonical_u64()
+    }
+    
+    /// Exponentiation: raises this element to a power.
+    ///
+    /// Uses binary exponentiation (square-and-multiply algorithm).
+    pub fn exp(&self, exponent: u64) -> Goldilocks {
+        if exponent == 0 {
+            return Goldilocks::one();
+        }
+        if exponent == 1 {
+            return *self;
+        }
+        
+        let mut result = Goldilocks::one();
+        let mut base = *self;
+        let mut exp = exponent;
+        
+        while exp > 0 {
+            if exp & 1 == 1 {
+                result = result.mul(&base);
+            }
+            base = base.square();
+            exp >>= 1;
+        }
+        
+        result
+    }
 }
 
 impl From<u64> for Goldilocks {
@@ -597,9 +726,166 @@ impl Fp5Element {
         result
     }
     
+    /// Creates an Fp5Element from a 40-byte little-endian representation.
+    ///
+    /// Each of the 5 Goldilocks field elements is read as 8 bytes (little-endian).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use poseidon_hash::Fp5Element;
+    ///
+    /// let bytes = [0u8; 40];
+    /// let elem = Fp5Element::from_bytes_le(&bytes);
+    /// ```
+    pub fn from_bytes_le(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 40 {
+            return Err(format!("Invalid length: expected 40 bytes, got {}", bytes.len()));
+        }
+        
+        let mut result = [Goldilocks::zero(); 5];
+        for i in 0..5 {
+            let mut limb_bytes = [0u8; 8];
+            limb_bytes.copy_from_slice(&bytes[i*8..(i+1)*8]);
+            result[i] = Goldilocks(u64::from_le_bytes(limb_bytes));
+        }
+        Ok(Fp5Element(result))
+    }
+    
     /// Computes the additive inverse (negation) of this element.
     pub fn neg(&self) -> Fp5Element {
         Fp5Element::zero().sub(self)
+    }
+    
+    /// Raises this element to the power of 2^n by repeated squaring.
+    ///
+    /// Equivalent to Go's ExpPowerOf2 function.
+    pub fn exp_power_of_2(&self, n: usize) -> Fp5Element {
+        let mut result = *self;
+        for _ in 0..n {
+            result = result.square();
+        }
+        result
+    }
+    
+    /// Computes the sign function Sgn0(x) for this element.
+    ///
+    /// Returns true if the sign bit (LSB of the first non-zero limb) is 0.
+    /// Equivalent to Go's Sgn0 function.
+    pub fn sgn0(&self) -> bool {
+        let mut sign = false;
+        let mut zero = true;
+        
+        for limb in &self.0 {
+            let sign_i = (limb.0 & 1) == 0;
+            let zero_i = limb.is_zero();
+            sign = sign || (zero && sign_i);
+            zero = zero && zero_i;
+        }
+        
+        sign
+    }
+    
+    /// Computes the square root of this element.
+    ///
+    /// Returns `Some(sqrt)` if the square root exists, `None` otherwise.
+    /// Equivalent to Go's Sqrt function.
+    pub fn sqrt(&self) -> Option<Fp5Element> {
+        // Step 1: v = x^(2^31)
+        let v = self.exp_power_of_2(31);
+        
+        // Step 2: d = x * v^(2^32) * v^(-1)
+        let v_32 = v.exp_power_of_2(32);
+        let v_inv = v.inverse_or_zero();
+        let d = self.mul(&v_32).mul(&v_inv);
+        
+        // Step 3: e = Frobenius(d * RepeatedFrobenius(d, 2))
+        let d_repeated = d.repeated_frobenius(2);
+        let d_mul = d.mul(&d_repeated);
+        let e = d_mul.frobenius();
+        
+        // Step 4: f = e^2
+        let f = e.square();
+        
+        // Step 5: Compute g = x[0]*f[0] + 3*(x[1]*f[4] + x[2]*f[3] + x[3]*f[2] + x[4]*f[1])
+        let w = Goldilocks(3);
+        let x0f0 = self.0[0].mul(&f.0[0]);
+        let x1f4 = self.0[1].mul(&f.0[4]);
+        let x2f3 = self.0[2].mul(&f.0[3]);
+        let x3f2 = self.0[3].mul(&f.0[2]);
+        let x4f1 = self.0[4].mul(&f.0[1]);
+        let added = x1f4.add(&x2f3).add(&x3f2).add(&x4f1);
+        let muld = w.mul(&added);
+        let g_goldi = x0f0.add(&muld);
+        
+        // Step 6: Compute sqrt of g in base field
+        let s_opt = g_goldi.sqrt();
+        let s = match s_opt {
+            Some(s_val) => s_val,
+            None => return None,
+        };
+        
+        // Step 7: Convert s to Fp5 and multiply by e^(-1)
+        let e_inv = e.inverse_or_zero();
+        let s_fp5 = Fp5Element::from_uint64_array([s.0, 0, 0, 0, 0]);
+        
+        Some(s_fp5.mul(&e_inv))
+    }
+    
+    /// Computes the canonical square root of this element.
+    ///
+    /// Returns `(canonical_sqrt, success)` where success indicates if the square root exists.
+    /// The canonical square root is chosen such that Sgn0(sqrt) == false.
+    /// Equivalent to Go's CanonicalSqrt function.
+    pub fn canonical_sqrt(&self) -> (Fp5Element, bool) {
+        match self.sqrt() {
+            Some(sqrt_x) => {
+                // If Sgn0(sqrt_x) is true, return -sqrt_x, else return sqrt_x
+                if sqrt_x.sgn0() {
+                    (sqrt_x.neg(), true)
+                } else {
+                    (sqrt_x, true)
+                }
+            }
+            None => (Fp5Element::zero(), false),
+        }
+    }
+    
+    /// Computes the Legendre symbol of this element.
+    ///
+    /// Returns a Goldilocks element:
+    /// - 0 if x is zero
+    /// - 1 if x is a quadratic residue (square)
+    /// - -1 (p-1) if x is a quadratic non-residue
+    /// 
+    /// Equivalent to Go's Legendre function.
+    pub fn legendre(&self) -> Goldilocks {
+        // Step 1: Compute Frobenius automorphisms
+        let frob1 = self.frobenius();
+        let frob2 = frob1.frobenius();
+        
+        // Step 2: Compute products
+        let frob1_times_frob2 = frob1.mul(&frob2);
+        let frob2_frob1_times_frob2 = frob1_times_frob2.repeated_frobenius(2);
+        
+        // Step 3: Compute xrExt = x * frob1_times_frob2 * frob2_frob1_times_frob2
+        let xr_ext = self.mul(&frob1_times_frob2).mul(&frob2_frob1_times_frob2);
+        
+        // Step 4: Extract base field element (first coordinate)
+        let xr = xr_ext.0[0];
+        
+        // Step 5: Compute xr^31, then xr^63
+        let xr_31 = xr.exp(1u64 << 31);
+        let xr_31_inv = xr_31.inverse();
+        let xr_63 = xr_31.exp(1u64 << 32);
+        
+        // Step 6: Return xr_63 * xr_31^(-1)
+        xr_63.mul(&xr_31_inv)
+    }
+    
+    /// Checks if two Fp5Element values are equal.
+    pub fn equals(&self, other: &Fp5Element) -> bool {
+        self.0.iter().zip(other.0.iter()).all(|(a, b)| a.equals(b))
     }
 }
 
@@ -717,6 +1003,114 @@ fn hash_n_to_m_no_pad(input: &[Goldilocks], num_outputs: usize) -> Fp5Element {
         }
         permute(&mut perm);
     }
+}
+
+/// Hash output type: 4 Goldilocks elements (32 bytes)
+/// Equivalent to Go's HashOut type
+pub type HashOut = [Goldilocks; 4];
+
+/// Hashes input elements without padding, producing exactly 4 output elements.
+/// Equivalent to Go's HashNoPad function.
+/// 
+/// # Arguments
+/// * `input` - Slice of Goldilocks field elements to hash
+/// 
+/// # Returns
+/// Array of 4 Goldilocks elements (HashOut)
+/// 
+/// # Example
+/// ```
+/// use poseidon_hash::{Goldilocks, hash_no_pad};
+/// 
+/// let elements = vec![
+///     Goldilocks::from_canonical_u64(1),
+///     Goldilocks::from_canonical_u64(2),
+///     // ... more elements
+/// ];
+/// let hash = hash_no_pad(&elements);
+/// assert_eq!(hash.len(), 4);
+/// ```
+pub fn hash_no_pad(input: &[Goldilocks]) -> HashOut {
+    hash_n_to_hash_no_pad(input)
+}
+
+/// Internal function to hash to exactly 4 elements
+fn hash_n_to_hash_no_pad(input: &[Goldilocks]) -> HashOut {
+    let mut perm = [Goldilocks::zero(); WIDTH];
+    
+    // Process input in chunks of RATE
+    for chunk in input.chunks(RATE) {
+        for (j, &val) in chunk.iter().enumerate() {
+            perm[j] = val;
+        }
+        permute(&mut perm);
+    }
+    
+    // Extract exactly 4 outputs
+    let mut outputs = [Goldilocks::zero(); 4];
+    let mut output_idx = 0;
+    loop {
+        for i in 0..RATE {
+            if output_idx < 4 {
+                outputs[output_idx] = perm[i];
+                output_idx += 1;
+            }
+            if output_idx == 4 {
+                return outputs;
+            }
+        }
+        permute(&mut perm);
+    }
+}
+
+/// Combines multiple hash outputs into a single hash output.
+/// Equivalent to Go's HashNToOne function.
+/// 
+/// # Arguments
+/// * `hashes` - Slice of HashOut values to combine
+/// 
+/// # Returns
+/// Single HashOut combining all inputs
+/// 
+/// # Example
+/// ```
+/// use poseidon_hash::{Goldilocks, hash_no_pad, hash_n_to_one};
+/// 
+/// let hash1 = hash_no_pad(&[Goldilocks::from_canonical_u64(1)]);
+/// let hash2 = hash_no_pad(&[Goldilocks::from_canonical_u64(2)]);
+/// let combined = hash_n_to_one(&[hash1, hash2]);
+/// ```
+pub fn hash_n_to_one(hashes: &[HashOut]) -> HashOut {
+    if hashes.is_empty() {
+        return [Goldilocks::zero(); 4];
+    }
+    if hashes.len() == 1 {
+        return hashes[0];
+    }
+    
+    // Combine hashes pairwise using HashTwoToOne
+    let mut result = hash_two_to_one(hashes[0], hashes[1]);
+    for i in 2..hashes.len() {
+        result = hash_two_to_one(result, hashes[i]);
+    }
+    result
+}
+
+/// Combines two hash outputs into one.
+/// Equivalent to Go's HashTwoToOne function.
+fn hash_two_to_one(input1: HashOut, input2: HashOut) -> HashOut {
+    // Combine 8 elements (4 from each hash) into 4 elements
+    let combined = [
+        input1[0], input1[1], input1[2], input1[3],
+        input2[0], input2[1], input2[2], input2[3],
+    ];
+    hash_n_to_hash_no_pad(&combined)
+}
+
+/// Returns an empty hash output (all zeros).
+/// Equivalent to Go's EmptyHashOut function.
+pub fn empty_hash_out() -> HashOut {
+    [Goldilocks::zero(); 4]
 }
 
 /// Applies the Poseidon2 permutation to a 12-element state array.
