@@ -306,10 +306,6 @@ impl LighterClient {
             ("tx_type", "14"), // CREATE_ORDER
             ("tx_info", &final_tx_json),
         ];
-        println!(
-            "[create_order] Form data: tx_type={}, price_protection={}, tx_info={}",
-            form_data[0].1, form_data[2].1, form_data[1].1
-        );
         let response = self
             .client
             .post(&format!("{}/api/v1/sendTx", self.base_url))
@@ -750,6 +746,8 @@ impl LighterClient {
             // Calculate InitialMarginFraction: IMF = 10,000 / leverage
             // Example: leverage 3x = 10,000 / 3 = 3333
             let initial_margin_fraction = (10_000u32 / leverage as u32) as u16;
+
+            print!("[update_leverage] Calculated InitialMarginFraction: {} for leverage {}", initial_margin_fraction, leverage);
 
             let tx_info = json!({
                 "AccountIndex": self.account_index,
